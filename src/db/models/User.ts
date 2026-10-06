@@ -19,6 +19,9 @@ export class User extends Model<
   declare passwordHash: CreationOptional<string | null>;
   declare name: CreationOptional<string | null>;
   declare role: CreationOptional<UserRole>;
+  declare emailVerified: CreationOptional<boolean>;
+  declare googleSub: CreationOptional<string | null>;
+  declare trialStartedAt: CreationOptional<Date | null>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
 }
@@ -48,6 +51,20 @@ export function initUserModel(sequelize: Sequelize): typeof User {
         type: DataTypes.ENUM("USER", "ADMIN"),
         allowNull: false,
         defaultValue: "USER",
+      },
+      emailVerified: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true,
+      },
+      googleSub: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true,
+      },
+      trialStartedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
       },
       createdAt: {
         type: DataTypes.DATE,

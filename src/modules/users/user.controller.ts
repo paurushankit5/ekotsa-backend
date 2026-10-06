@@ -1,10 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
-import { z } from "zod";
+import { Joi, validateOrThrow } from "../../utils/validate.js";
 import { UserService } from "./user.service.js";
 
-const createUserSchema = z.object({
-  email: z.string().email().max(254),
-  name: z.string().trim().min(1).max(120).optional(),
+const createUserSchema = Joi.object({
+  email: Joi.string().email().max(254).required(),
+  name: Joi.string().trim().min(1).max(120).optional(),
 });
 
 export const UserController = {
@@ -28,20 +28,10 @@ export const UserController = {
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const body = createUserSchema.parse(req.body);
+      const body = validateOrThrow(createUserSchema, req.body);
       const user = await UserService.createUser(body);
       res.status(201).json({ ok: true, data: { user } });
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({
-          ok: false,
-          error: {
-            code: "VALIDATION_ERROR",
-            message: error.issues.map((issue) => issue.message).join("; "),
-          },
-        });
-        return;
-      }
       next(error);
     }
   },

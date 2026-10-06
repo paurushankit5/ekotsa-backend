@@ -1,3 +1,4 @@
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -19,6 +20,7 @@ export function createApp(env: Env) {
     }),
   );
   app.use(express.json({ limit: "1mb" }));
+  app.use(cookieParser());
   app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 
   app.get("/", (_req, res) => {
@@ -30,6 +32,8 @@ export function createApp(env: Env) {
   });
 
   app.use("/v1", v1Router);
+  // Atithi calls /api/v1/* today
+  app.use("/api/v1", v1Router);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
