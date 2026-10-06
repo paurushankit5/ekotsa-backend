@@ -8,6 +8,7 @@ import { DeviceAdminController } from "../devices/devices.admin.controller.js";
 import { AdminOpsController } from "./admin.ops.controller.js";
 import { notificationsAdminRouter } from "../notifications/notifications.routes.js";
 import { cmsAdminRouter } from "../cms/cms.routes.js";
+import { releasesAdminRouter } from "../releases/releases.routes.js";
 
 /**
  * Admin surfaces for Waves B–G
@@ -67,3 +68,4 @@ adminRouter.get("/exports/:kind", requireAdminSession, AdminOpsController.export
 
 adminRouter.use("/notifications", notificationsAdminRouter);
 adminRouter.use("/cms", cmsAdminRouter);
+adminRouter.use("/releases", releasesAdminRouter);

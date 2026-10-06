@@ -4,6 +4,7 @@ import {
   User,
 } from "../../db/models/index.js";
 import { AppError } from "../../middleware/errorHandler.js";
+import { DownloadsService } from "../downloads/downloads.service.js";
 
 function normalizeName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
@@ -26,12 +27,41 @@ type RegistrationPublic = {
   organizationName: string;
   organizationId: string | null;
   email: string;
+  contactCountryCode: string | null;
+  contactNumber: string | null;
+  industry: string | null;
+  businessAddress: string | null;
   status: string;
   linkedUserId: string | null;
   firstDownloadAt?: string | null;
   firstDeviceActivatedAt?: string | null;
   createdAt: string;
 };
+
+type DownloadAuthPublic = {
+  token: string;
+  expiresAt: string;
+  remainingUses: number;
+};
+
+function toPublic(registration: CustomerRegistration): RegistrationPublic {
+  return {
+    id: registration.id,
+    fullName: registration.fullName,
+    organizationName: registration.organizationName,
+    organizationId: registration.organizationId,
+    email: registration.normalizedEmail,
+    contactCountryCode: registration.contactCountryCode,
+    contactNumber: registration.contactNumber,
+    industry: registration.industry,
+    businessAddress: registration.businessAddress,
+    status: registration.status,
+    linkedUserId: registration.linkedUserId,
+    firstDownloadAt: registration.firstDownloadAt?.toISOString() ?? null,
+    firstDeviceActivatedAt: registration.firstDeviceActivatedAt?.toISOString() ?? null,
+    createdAt: registration.createdAt.toISOString(),
+  };
+}
 
 export const OrganizationsService = {
   async ensureForName(input: {
@@ -68,22 +98,28 @@ export const OrganizationsService = {
 };
 
 export const RegistrationsService = {
+  /**
+   * Lead capture before installer download.
+   * Re-submitting the same email updates contact details and issues a fresh download token
+   * (no login required).
+   */
   async create(input: {
     fullName: string;
     organizationName: string;
     email: string;
-    contactCountryCode?: string;
-    contactNumber?: string;
+    contactCountryCode: string;
+    contactNumber: string;
+    industry: string;
+    businessAddress: string;
     whatsappNumber?: string;
     linkedUserId?: string | null;
     source?: string;
-  }): Promise<{ registration: RegistrationPublic }> {
+  }): Promise<{
+    registration: RegistrationPublic;
+    downloadAuth: DownloadAuthPublic;
+    created: boolean;
+  }> {
     const normalizedEmail = normalizeEmail(input.email);
-    const existing = await CustomerRegistration.findOne({ where: { normalizedEmail } });
-    if (existing) {
-      throw new AppError(409, "Registration already exists for email", "REGISTRATION_EXISTS");
-    }
-
     const org = await OrganizationsService.ensureForName({
       displayName: input.organizationName,
       createdByUserId: input.linkedUserId ?? null,
@@ -95,30 +131,50 @@ export const RegistrationsService = {
       linkedUserId = user?.id ?? null;
     }
 
-    const registration = await CustomerRegistration.create({
+    const mobile = input.contactNumber.trim();
+    const whatsapp = (input.whatsappNumber ?? mobile).trim();
+    const leadFields = {
       fullName: input.fullName.trim(),
       organizationName: input.organizationName.trim(),
       organizationId: org.id,
-      normalizedEmail,
-      contactCountryCode: input.contactCountryCode ?? null,
-      contactNumber: input.contactNumber ?? null,
-      whatsappNumber: input.whatsappNumber ?? null,
-      status: linkedUserId ? "AUTHENTICATED" : "PENDING_AUTH",
+      contactCountryCode: input.contactCountryCode.trim(),
+      contactNumber: mobile,
+      whatsappNumber: whatsapp,
+      industry: input.industry.trim(),
+      businessAddress: input.businessAddress.trim(),
       source: input.source ?? "public_download",
-      linkedUserId,
-    });
+    };
+
+    let registration = await CustomerRegistration.findOne({ where: { normalizedEmail } });
+    let created = false;
+
+    if (registration) {
+      const nextStatus =
+        (registration.linkedUserId ?? linkedUserId) && registration.status === "PENDING_AUTH"
+          ? "AUTHENTICATED"
+          : registration.status;
+      await registration.update({
+        ...leadFields,
+        linkedUserId: registration.linkedUserId ?? linkedUserId,
+        status: nextStatus,
+      });
+      await registration.reload();
+    } else {
+      registration = await CustomerRegistration.create({
+        ...leadFields,
+        normalizedEmail,
+        status: linkedUserId ? "AUTHENTICATED" : "PENDING_AUTH",
+        linkedUserId,
+      });
+      created = true;
+    }
+
+    const downloadAuth = await DownloadsService.createSessionForRegistration(registration.id);
 
     return {
-      registration: {
-        id: registration.id,
-        fullName: registration.fullName,
-        organizationName: registration.organizationName,
-        organizationId: registration.organizationId,
-        email: registration.normalizedEmail,
-        status: registration.status,
-        linkedUserId: registration.linkedUserId,
-        createdAt: registration.createdAt.toISOString(),
-      },
+      registration: toPublic(registration),
+      downloadAuth,
+      created,
     };
   },
 
@@ -144,20 +200,7 @@ export const RegistrationsService = {
       throw new AppError(404, "Registration not found", "REGISTRATION_NOT_FOUND");
     }
 
-    return {
-      registration: {
-        id: registration.id,
-        fullName: registration.fullName,
-        organizationName: registration.organizationName,
-        organizationId: registration.organizationId,
-        email: registration.normalizedEmail,
-        status: registration.status,
-        linkedUserId: registration.linkedUserId,
-        firstDownloadAt: registration.firstDownloadAt?.toISOString() ?? null,
-        firstDeviceActivatedAt: registration.firstDeviceActivatedAt?.toISOString() ?? null,
-        createdAt: registration.createdAt.toISOString(),
-      },
-    };
+    return { registration: toPublic(registration) };
   },
 
   async linkUser(

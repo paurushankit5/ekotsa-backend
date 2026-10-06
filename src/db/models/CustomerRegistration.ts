@@ -26,6 +26,8 @@ export class CustomerRegistration extends Model<
   declare contactCountryCode: CreationOptional<string | null>;
   declare contactNumber: CreationOptional<string | null>;
   declare whatsappNumber: CreationOptional<string | null>;
+  declare industry: CreationOptional<string | null>;
+  declare businessAddress: CreationOptional<string | null>;
   declare status: CreationOptional<RegistrationStatus>;
   declare source: CreationOptional<string>;
   declare linkedUserId: CreationOptional<string | null>;
@@ -53,6 +55,8 @@ export function initCustomerRegistrationModel(
       contactCountryCode: { type: DataTypes.STRING, allowNull: true },
       contactNumber: { type: DataTypes.STRING, allowNull: true },
       whatsappNumber: { type: DataTypes.STRING, allowNull: true },
+      industry: { type: DataTypes.STRING, allowNull: true },
+      businessAddress: { type: DataTypes.TEXT, allowNull: true },
       status: {
         type: DataTypes.ENUM(
           "PENDING_AUTH",

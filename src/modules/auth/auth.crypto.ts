@@ -97,6 +97,10 @@ export async function verifyResetToken(token: string, env: Env = loadEnv()) {
   }
 }
 
+export function authCookieNameForRole(role: UserRole, env: Env = loadEnv()) {
+  return role === "ADMIN" ? env.ADMIN_AUTH_COOKIE_NAME : env.AUTH_COOKIE_NAME;
+}
+
 export function setSessionCookie(
   res: Response,
   token: string,
@@ -104,22 +108,63 @@ export function setSessionCookie(
   env: Env = loadEnv(),
 ) {
   const maxAgeSeconds = role === "ADMIN" ? 60 * 60 * 12 : 60 * 60 * 24 * 7;
-  res.cookie(env.AUTH_COOKIE_NAME, token, {
+  const cookieName = authCookieNameForRole(role, env);
+  res.cookie(cookieName, token, {
     httpOnly: true,
-    sameSite: role === "ADMIN" ? "strict" : "lax",
+    sameSite: "lax",
     secure: env.NODE_ENV === "production",
     path: "/",
     maxAge: maxAgeSeconds * 1000,
   });
-}
-
-export function clearSessionCookie(res: Response, env: Env = loadEnv()) {
-  res.clearCookie(env.AUTH_COOKIE_NAME, {
+  // Keep jars isolated: clearing the other role's cookie avoids mixed identity.
+  const other =
+    role === "ADMIN" ? env.AUTH_COOKIE_NAME : env.ADMIN_AUTH_COOKIE_NAME;
+  res.clearCookie(other, {
     httpOnly: true,
     sameSite: "lax",
     secure: env.NODE_ENV === "production",
     path: "/",
   });
+}
+
+export function clearSessionCookie(res: Response, env: Env = loadEnv()) {
+  for (const name of [env.AUTH_COOKIE_NAME, env.ADMIN_AUTH_COOKIE_NAME]) {
+    res.clearCookie(name, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: env.NODE_ENV === "production",
+      path: "/",
+    });
+  }
+}
+
+/**
+ * Prefer Authorization: Bearer <jwt>. Cookie jars are role-separated:
+ * - ekotsa_admin_session for ADMIN
+ * - ekotsa_session for USER
+ */
+export function extractAccessToken(req: {
+  headers: { authorization?: string };
+  cookies?: Record<string, unknown>;
+}, env: Env = loadEnv()) {
+  const header = req.headers.authorization;
+  if (typeof header === "string") {
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    if (match?.[1]?.trim()) return match[1].trim();
+  }
+  const adminCookie = req.cookies?.[env.ADMIN_AUTH_COOKIE_NAME];
+  if (typeof adminCookie === "string" && adminCookie.trim()) return adminCookie.trim();
+  const userCookie = req.cookies?.[env.AUTH_COOKIE_NAME];
+  if (typeof userCookie === "string" && userCookie.trim()) return userCookie.trim();
+  return undefined;
+}
+
+export function authTokenPayload(token: string, user: ReturnType<typeof publicUser>) {
+  return {
+    accessToken: token,
+    tokenType: "Bearer" as const,
+    user,
+  };
 }
 
 export function publicUser(user: {

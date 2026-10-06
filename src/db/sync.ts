@@ -15,7 +15,20 @@ import {
   PaymentSubmission,
 } from "./models/index.js";
 
+/**
+ * @deprecated Prefer `npm run db:migrate`.
+ *
+ * `sequelize.sync({ alter: true })` compares every model to the live DB and emits
+ * ALTER/CREATE statements for drift. That is useful for empty local bootstrap only —
+ * it is not a migration system, re-touches already-correct schema, and can be
+ * destructive on production (type changes, drop/recreate edge cases).
+ *
+ * Use versioned files in `src/db/migrations/` instead.
+ */
 async function sync() {
+  console.warn(
+    "[ekotsa-backend] WARNING: db:sync uses sequelize.sync({ alter: true }). Prefer npm run db:migrate.",
+  );
   void User;
   void PasswordResetOtp;
   void Device;
@@ -29,7 +42,7 @@ async function sync() {
   void DownloadEvent;
   void PaymentSubmission;
   await sequelize.sync({ alter: true });
-  console.log("[ekotsa-backend] database synced");
+  console.log("[ekotsa-backend] database synced (legacy path)");
   await sequelize.close();
 }
 

@@ -26,7 +26,7 @@ export type PublicReleaseManifest = Omit<ReleaseManifest, "installerUrl"> & {
 };
 
 const releaseSchema = Joi.object({
-  product: Joi.string().valid("Ekotsa").required(),
+  product: Joi.string().min(1).max(80).required(),
   channel: Joi.string().min(1).required(),
   version: Joi.string()
     .pattern(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/)

@@ -11,7 +11,7 @@ import { AuthController } from "./auth.controller.js";
  * POST   /v1/auth/verify-otp        — verify OTP → resetToken
  * POST   /v1/auth/reset-password    — set new password
  * POST   /v1/auth/otp/start         — login / device-activation OTP
- * POST   /v1/auth/otp/verify        — verify → session cookie (LOGIN) or activation session
+ * POST   /v1/auth/otp/verify        — verify → Bearer JWT (LOGIN) or activation session
  * GET+POST /v1/auth/google/start
  * GET    /v1/auth/google/callback
  * POST   /v1/auth/google/exchange

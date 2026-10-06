@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { Joi, validateOrThrow } from "../../utils/validate.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { DownloadsService } from "./downloads.service.js";
+import { DOWNLOAD_AUTH_COOKIE, setDownloadSessionCookie } from "./downloads.cookies.js";
 
 const sessionSchema = Joi.object({
   platform: Joi.string().valid("windows", "macos", "linux", "*").optional(),
@@ -36,6 +37,7 @@ export const DownloadsController = {
         platform: body.platform,
         productCode: body.productCode,
       });
+      setDownloadSessionCookie(res, result.token, new Date(result.expiresAt));
       res.status(201).json({ ok: true, downloadAuth: result });
     } catch (error) {
       next(error);
@@ -48,12 +50,12 @@ export const DownloadsController = {
       const header = req.headers.authorization ?? "";
       const bearer = header.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
       const cookieToken =
-        typeof req.cookies?.ek_download_session === "string"
-          ? req.cookies.ek_download_session
+        typeof req.cookies?.[DOWNLOAD_AUTH_COOKIE] === "string"
+          ? req.cookies[DOWNLOAD_AUTH_COOKIE]
           : undefined;
       const token = body.token || bearer || cookieToken;
       if (!token) {
-        throw new AppError(401, "Registration is required before downloading", "DOWNLOAD_UNAUTHORIZED");
+        throw new AppError(401, "Share your details before downloading", "DOWNLOAD_UNAUTHORIZED");
       }
 
       const result = await DownloadsService.authorize({

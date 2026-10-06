@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { loadEnv } from "../config/env.js";
 import { AppError } from "./errorHandler.js";
-import { verifySession } from "../modules/auth/auth.crypto.js";
+import { extractAccessToken, verifySession } from "../modules/auth/auth.crypto.js";
 
 export type UserSessionContext = {
   userId: string;
@@ -13,18 +13,23 @@ declare global {
   namespace Express {
     interface Request {
       userSession?: UserSessionContext;
+      accessToken?: string;
     }
   }
 }
 
+async function resolveSession(req: Request) {
+  const token = extractAccessToken(req);
+  if (!token) return null;
+  const session = await verifySession(token);
+  if (!session) return null;
+  req.accessToken = token;
+  return session;
+}
+
 export async function requireUserSession(req: Request, _res: Response, next: NextFunction) {
   try {
-    const env = loadEnv();
-    const token = req.cookies?.[env.AUTH_COOKIE_NAME] as string | undefined;
-    if (!token) {
-      throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-    }
-    const session = await verifySession(token);
+    const session = await resolveSession(req);
     if (!session) {
       throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
     }
@@ -35,15 +40,11 @@ export async function requireUserSession(req: Request, _res: Response, next: Nex
   }
 }
 
-/** Attach session when cookie present; never 401. */
+/** Attach session when Bearer/cookie JWT present; never 401. */
 export async function optionalUserSession(req: Request, _res: Response, next: NextFunction) {
   try {
-    const env = loadEnv();
-    const token = req.cookies?.[env.AUTH_COOKIE_NAME] as string | undefined;
-    if (token) {
-      const session = await verifySession(token);
-      if (session) req.userSession = session;
-    }
+    const session = await resolveSession(req);
+    if (session) req.userSession = session;
     next();
   } catch {
     next();
@@ -52,12 +53,7 @@ export async function optionalUserSession(req: Request, _res: Response, next: Ne
 
 export async function requireAdminSession(req: Request, _res: Response, next: NextFunction) {
   try {
-    const env = loadEnv();
-    const token = req.cookies?.[env.AUTH_COOKIE_NAME] as string | undefined;
-    if (!token) {
-      throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-    }
-    const session = await verifySession(token);
+    const session = await resolveSession(req);
     if (!session) {
       throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
     }
@@ -69,4 +65,8 @@ export async function requireAdminSession(req: Request, _res: Response, next: Ne
   } catch (error) {
     next(error);
   }
+}
+
+export function getCookieName() {
+  return loadEnv().AUTH_COOKIE_NAME;
 }

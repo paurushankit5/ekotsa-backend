@@ -58,6 +58,7 @@ import {
   initGoogleOAuthTransactionModel,
   GoogleOAuthTransaction,
 } from "./GoogleOAuthTransaction.js";
+import { initAppReleaseModel, AppRelease } from "./AppRelease.js";
 
 initUserModel(sequelize);
 initPasswordResetOtpModel(sequelize);
@@ -90,6 +91,7 @@ initCmsPreviewTokenModel(sequelize);
 initCmsWorkflowActionModel(sequelize);
 initCmsRoleAssignmentModel(sequelize);
 initGoogleOAuthTransactionModel(sequelize);
+initAppReleaseModel(sequelize);
 
 User.hasMany(PasswordResetOtp, { foreignKey: "userId", as: "resetOtps" });
 PasswordResetOtp.belongsTo(User, { foreignKey: "userId", as: "user" });
@@ -229,6 +231,7 @@ export {
   CmsWorkflowAction,
   CmsRoleAssignment,
   GoogleOAuthTransaction,
+  AppRelease,
 };
 export type { UserRole } from "./User.js";
 export type { DeviceStatus } from "./Device.js";
@@ -244,3 +247,4 @@ export type { CmsProductDbStatus } from "./CmsProduct.js";
 export type { CmsMenuLocation } from "./CmsMenu.js";
 export type { CmsAssetKind } from "./CmsAsset.js";
 export type { CmsRoleName } from "./CmsRoleAssignment.js";
+export type { AppReleaseStatus, AppReleasePlatform } from "./AppRelease.js";

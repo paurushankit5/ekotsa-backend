@@ -8,6 +8,7 @@ export type Env = {
   JWT_SECRET: string;
   OTP_PEPPER?: string;
   AUTH_COOKIE_NAME: string;
+  ADMIN_AUTH_COOKIE_NAME: string;
   FRONTEND_URL: string;
   APP_PUBLIC_URL?: string;
   DEVICE_TOKEN_PEPPER?: string;
@@ -33,6 +34,11 @@ export type Env = {
   APP_RELEASE_MANIFEST_JSON?: string;
   STORAGE_LOCAL_DIR?: string;
   STORAGE_BUCKET?: string;
+  R2_ACCOUNT_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  R2_BUCKET?: string;
+  R2_PUBLIC_BASE_URL?: string;
   PAYMENT_UPI_ID?: string;
   PAYMENT_PAYEE_NAME?: string;
   PAYMENT_QR_IMAGE_URL?: string;
@@ -53,6 +59,7 @@ const envSchema = Joi.object<Env>({
   JWT_SECRET: Joi.string().min(16).required(),
   OTP_PEPPER: Joi.string().min(8).optional(),
   AUTH_COOKIE_NAME: Joi.string().default("ekotsa_session"),
+  ADMIN_AUTH_COOKIE_NAME: Joi.string().default("ekotsa_admin_session"),
   FRONTEND_URL: Joi.string().uri().default("http://localhost:3000"),
   APP_PUBLIC_URL: Joi.string().uri().optional(),
 
@@ -83,6 +90,11 @@ const envSchema = Joi.object<Env>({
   APP_RELEASE_MANIFEST_JSON: Joi.string().optional(),
   STORAGE_LOCAL_DIR: Joi.string().optional(),
   STORAGE_BUCKET: Joi.string().default("payment-proofs"),
+  R2_ACCOUNT_ID: Joi.string().optional(),
+  R2_ACCESS_KEY_ID: Joi.string().optional(),
+  R2_SECRET_ACCESS_KEY: Joi.string().optional(),
+  R2_BUCKET: Joi.string().optional(),
+  R2_PUBLIC_BASE_URL: Joi.string().uri().optional(),
   PAYMENT_UPI_ID: Joi.string().optional(),
   PAYMENT_PAYEE_NAME: Joi.string().optional(),
   PAYMENT_QR_IMAGE_URL: Joi.string().uri().optional(),

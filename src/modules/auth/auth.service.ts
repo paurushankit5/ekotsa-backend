@@ -5,6 +5,7 @@ import {
   User,
   PasswordResetOtp,
   GoogleOAuthTransaction,
+  LicenseGrant,
 } from "../../db/models/index.js";
 import {
   generateOtp,
@@ -19,6 +20,7 @@ import {
   verifyResetToken,
 } from "./auth.crypto.js";
 import { sendOtpEmail } from "./auth.mailer.js";
+import { getGraceDays, getTrialDays } from "../../services/license-artifacts.js";
 import {
   completeGoogleOAuthCallback,
   hashGoogleOAuthValue,
@@ -82,7 +84,84 @@ export const AuthService = {
   async me(userId: string) {
     const user = await User.findByPk(userId);
     if (!user) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-    return publicUser(user);
+
+    const now = new Date();
+    const env = loadEnv();
+    const trialDays = getTrialDays(env);
+    const graceDays = getGraceDays(env);
+
+    const grant = await LicenseGrant.findOne({
+      where: { userId: user.id },
+      order: [["expiresAt", "DESC"]],
+    });
+
+    const trialStartedAt = user.trialStartedAt;
+    const trialEndsAt = trialStartedAt
+      ? new Date(trialStartedAt.getTime() + trialDays * 24 * 60 * 60 * 1000)
+      : null;
+
+    const grantActive =
+      !!grant &&
+      grant.status === "ACTIVE" &&
+      !grant.revokedAt &&
+      !grant.suspendedAt &&
+      grant.expiresAt.getTime() > now.getTime();
+    const grantGrace =
+      !!grant &&
+      grant.status === "ACTIVE" &&
+      !grant.revokedAt &&
+      !grant.suspendedAt &&
+      !grantActive &&
+      grant.expiresAt.getTime() + graceDays * 24 * 60 * 60 * 1000 > now.getTime();
+
+    const trialActive =
+      !!trialEndsAt && trialEndsAt.getTime() > now.getTime() && !grantActive;
+
+    let status = "NOT_ACTIVATED";
+    let accessMode: "FULL" | "LIMITED" | "BLOCKED" = "BLOCKED";
+    if (grant?.revokedAt || grant?.status === "REVOKED") {
+      status = "REVOKED";
+      accessMode = "BLOCKED";
+    } else if (grant?.suspendedAt || grant?.status === "SUSPENDED") {
+      status = "SUSPENDED";
+      accessMode = "BLOCKED";
+    } else if (grantActive) {
+      status = "PAID_ACTIVE";
+      accessMode = "FULL";
+    } else if (grantGrace) {
+      status = "GRACE";
+      accessMode = "FULL";
+    } else if (trialActive) {
+      status = "TRIAL_ACTIVE";
+      accessMode = "FULL";
+    } else if (trialStartedAt) {
+      status = "EXPIRED";
+      accessMode = "LIMITED";
+    }
+
+    const subscriptionEndsAt = grant?.expiresAt.toISOString() ?? null;
+
+    return {
+      user: { email: user.email, role: user.role },
+      trial: {
+        active: trialActive,
+        startsAt: trialStartedAt?.toISOString() ?? null,
+        endsAt: trialEndsAt?.toISOString() ?? null,
+      },
+      subscription: {
+        active: grantActive || grantGrace,
+        plan: grant?.plan ?? null,
+        expiresAt: subscriptionEndsAt,
+      },
+      entitlement: {
+        status,
+        accessMode,
+        reasonCode: status === "NOT_ACTIVATED" ? "DEVICE_ACTIVATION_REQUIRED" : null,
+        trialStartedAt: trialStartedAt?.toISOString() ?? null,
+        trialEndsAt: trialEndsAt?.toISOString() ?? null,
+        subscriptionEndsAt,
+      },
+    };
   },
 
   async forgotPassword(emailRaw: string) {
@@ -381,8 +460,9 @@ export const AuthService = {
       url.searchParams.set("oauth", "google");
       redirectUrl = url.toString();
     } else {
-      const url = new URL("/auth/login", env.FRONTEND_URL);
-      url.searchParams.set("google", "1");
+      // Default to dashboard after web Google login (not the login page).
+      const url = new URL("/dashboard", env.FRONTEND_URL);
+      url.searchParams.set("oauth", "google");
       redirectUrl = url.toString();
     }
 

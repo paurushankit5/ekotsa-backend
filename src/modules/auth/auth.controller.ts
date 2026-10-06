@@ -4,7 +4,9 @@ import { loadEnv } from "../../config/env.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { AuthService } from "./auth.service.js";
 import {
+  authTokenPayload,
   clearSessionCookie,
+  extractAccessToken,
   setSessionCookie,
   signSession,
   verifySession,
@@ -74,15 +76,20 @@ const googleExchangeSchema = Joi.object({
 
 function requestOrigin(req: Request): string {
   const env = loadEnv();
-  if (env.APP_PUBLIC_URL) {
-    try {
-      return new URL(env.APP_PUBLIC_URL).origin;
-    } catch {
-      // fall through
-    }
+  // Prefer the browser-facing site. APP_PUBLIC_URL is the API host and must not
+  // be used here — it rejects browserReturnTo=/dashboard (wrong origin).
+  const forwardedHost = req.headers["x-forwarded-host"];
+  if (typeof forwardedHost === "string" && forwardedHost.trim()) {
+    const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "http");
+    return `${proto}://${forwardedHost.trim()}`;
+  }
+  try {
+    return new URL(env.FRONTEND_URL).origin;
+  } catch {
+    // fall through
   }
   const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "http");
-  const host = String(req.headers["x-forwarded-host"] || req.get("host") || "localhost");
+  const host = String(req.get("host") || "localhost");
   return `${proto}://${host}`;
 }
 
@@ -119,8 +126,10 @@ export const AuthController = {
     try {
       const body = validateOrThrow(signupSchema, req.body);
       const result = await AuthService.signup(body);
+      const auth = authTokenPayload(result.token, result.user);
+      // Cookie mirror for Next middleware only; clients must use Bearer accessToken.
       setSessionCookie(res, result.token, result.user.role);
-      res.status(201).json({ ok: true, data: { user: result.user } });
+      res.status(201).json({ ok: true, ...auth, data: auth });
     } catch (error) {
       next(error);
     }
@@ -130,8 +139,9 @@ export const AuthController = {
     try {
       const body = validateOrThrow(loginSchema, req.body);
       const result = await AuthService.login(body);
+      const auth = authTokenPayload(result.token, result.user);
       setSessionCookie(res, result.token, result.user.role);
-      res.json({ ok: true, data: { user: result.user } });
+      res.json({ ok: true, ...auth, data: auth });
     } catch (error) {
       next(error);
     }
@@ -148,13 +158,13 @@ export const AuthController = {
 
   async me(req: Request, res: Response, next: NextFunction) {
     try {
-      const env = loadEnv();
-      const token = req.cookies?.[env.AUTH_COOKIE_NAME] as string | undefined;
+      const token = extractAccessToken(req);
       if (!token) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
       const session = await verifySession(token);
       if (!session) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const user = await AuthService.me(session.userId);
-      res.json({ ok: true, data: { user } });
+      const payload = await AuthService.me(session.userId);
+      // Flat shape for website apiGet (`{ ok, user, trial, subscription, entitlement }`).
+      res.json({ ok: true, ...payload, data: payload });
     } catch (error) {
       next(error);
     }
@@ -185,8 +195,9 @@ export const AuthController = {
       const body = validateOrThrow(verifyLoginOtpSchema, req.body);
       const result = await AuthService.verifyLoginOtp(body);
       if (result.purpose === "LOGIN") {
+        const auth = authTokenPayload(result.token, result.user);
         setSessionCookie(res, result.token, result.user.role);
-        res.json({ ok: true, data: { user: result.user } });
+        res.json({ ok: true, ...auth, data: auth });
         return;
       }
       res.json({
@@ -275,8 +286,15 @@ export const AuthController = {
         state,
         origin: requestOrigin(req),
       });
+      // Cookie mirror for first navigation; FE /auth/callback stores Bearer JWT.
+      // Token MUST be in the query string (not hash): Next.js rewrites strip URL
+      // fragments from upstream Location headers, which broke Google login.
       setSessionCookie(res, result.token, result.user.role);
-      res.redirect(result.redirectUrl);
+      const target = new URL(result.redirectUrl);
+      const callback = new URL("/auth/callback", `${target.protocol}//${target.host}`);
+      callback.searchParams.set("redirect", `${target.pathname}${target.search}`);
+      callback.searchParams.set("access_token", result.token);
+      res.redirect(callback.toString());
     } catch (error) {
       next(error);
     }
@@ -291,16 +309,17 @@ export const AuthController = {
         email: result.user.email,
         role: result.user.role,
       });
+      const auth = authTokenPayload(sessionToken, result.user);
       setSessionCookie(res, sessionToken, result.user.role);
 
       // Top-level activationSession for Atithi; `data` kept for web clients.
       res.json({
         ok: true,
-        user: result.user,
+        ...auth,
         activationSession: result.activationSession,
         data: {
           ok: true,
-          user: result.user,
+          ...auth,
           activationSession: result.activationSession,
         },
       });

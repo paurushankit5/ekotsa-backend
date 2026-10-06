@@ -9,6 +9,9 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx src/db/migrate.ts up",
+    "db:migrate:status": "tsx src/db/migrate.ts status",
+    "db:migration:create": "tsx scripts/create-migration.ts",
     "db:sync": "tsx src/db/sync.ts",
     "keys:license": "node scripts/generate-license-keys.mjs",
     "make-admin": "tsx scripts/make-admin.ts"
@@ -17,6 +20,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1146.0",
+    "@aws-sdk/s3-request-presigner": "^3.1146.0",
     "@paralleldrive/cuid2": "^2.2.2",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",

@@ -8,11 +8,11 @@ import {
   DownloadEvent,
 } from "../../db/models/index.js";
 import {
-  getReleaseManifestForPlatform,
   toPublicReleaseManifest,
   type Platform,
   type PublicReleaseManifest,
 } from "../releases/releases.manifest.js";
+import { ReleasesService } from "../releases/releases.service.js";
 
 const DOWNLOAD_AUTH_TTL_MS = 30 * 60 * 1000;
 const DOWNLOAD_AUTH_MAX_USES = 3;
@@ -28,7 +28,8 @@ function newToken() {
 
 export const DownloadsService = {
   async createSession(input: {
-    userId: string;
+    userId?: string | null;
+    registrationId?: string | null;
     platform?: string;
     productCode?: string;
   }): Promise<{
@@ -36,15 +37,20 @@ export const DownloadsService = {
     expiresAt: string;
     remainingUses: number;
   }> {
-    const registration = await CustomerRegistration.findOne({
-      where: { linkedUserId: input.userId },
-    });
+    let registration: CustomerRegistration | null = null;
+    if (input.registrationId) {
+      registration = await CustomerRegistration.findByPk(input.registrationId);
+    } else if (input.userId) {
+      registration = await CustomerRegistration.findOne({
+        where: { linkedUserId: input.userId },
+      });
+    }
 
     const token = newToken();
     const expiresAt = new Date(Date.now() + DOWNLOAD_AUTH_TTL_MS);
     await DownloadAuthorization.create({
-      userId: input.userId,
-      registrationId: registration?.id ?? null,
+      userId: input.userId ?? registration?.linkedUserId ?? null,
+      registrationId: registration?.id ?? input.registrationId ?? null,
       organizationId: registration?.organizationId ?? null,
       productCode: input.productCode ?? "ekotsa-os",
       platform: input.platform ?? "*",
@@ -61,6 +67,19 @@ export const DownloadsService = {
     };
   },
 
+  /** Lead-gated download: no login required, only a saved registration. */
+  async createSessionForRegistration(registrationId: string): Promise<{
+    token: string;
+    expiresAt: string;
+    remainingUses: number;
+  }> {
+    const registration = await CustomerRegistration.findByPk(registrationId);
+    if (!registration) {
+      throw new AppError(404, "Registration not found", "REGISTRATION_NOT_FOUND");
+    }
+    return this.createSession({ registrationId: registration.id });
+  },
+
   async authorize(input: {
     token: string;
     platform: Platform;
@@ -69,7 +88,10 @@ export const DownloadsService = {
     release: PublicReleaseManifest;
     download: { url: string; remainingUses: number };
   }> {
-    const release = getReleaseManifestForPlatform(input.platform);
+    const release = await ReleasesService.getDownloadable({
+      platform: input.platform,
+      version: input.installerVersion ?? null,
+    });
     if (!release) {
       throw new AppError(404, "No active release for platform", "RELEASE_NOT_FOUND");
     }
