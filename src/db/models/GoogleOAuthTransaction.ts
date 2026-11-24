@@ -22,6 +22,12 @@ export class GoogleOAuthTransaction extends Model<
   declare desktopCallbackUri: CreationOptional<string | null>;
   declare emailHint: CreationOptional<string | null>;
   declare exchangeCodeHash: CreationOptional<string | null>;
+  declare browserExchangeCodeHash: CreationOptional<string | null>;
+  declare browserExchangeExpiresAt: CreationOptional<Date | null>;
+  declare browserExchangeConsumedAt: CreationOptional<Date | null>;
+  declare adminExchangeCodeHash: CreationOptional<string | null>;
+  declare adminExchangeExpiresAt: CreationOptional<Date | null>;
+  declare adminExchangeConsumedAt: CreationOptional<Date | null>;
   declare userId: CreationOptional<string | null>;
   declare completedAt: CreationOptional<Date | null>;
   declare consumedAt: CreationOptional<Date | null>;
@@ -79,6 +85,12 @@ export function initGoogleOAuthTransactionModel(
         allowNull: true,
         unique: true,
       },
+      browserExchangeCodeHash: { type: DataTypes.STRING, allowNull: true, unique: true },
+      browserExchangeExpiresAt: { type: DataTypes.DATE, allowNull: true },
+      browserExchangeConsumedAt: { type: DataTypes.DATE, allowNull: true },
+      adminExchangeCodeHash: { type: DataTypes.STRING, allowNull: true, unique: true },
+      adminExchangeExpiresAt: { type: DataTypes.DATE, allowNull: true },
+      adminExchangeConsumedAt: { type: DataTypes.DATE, allowNull: true },
       userId: {
         type: DataTypes.STRING,
         allowNull: true,

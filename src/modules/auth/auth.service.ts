@@ -1,4 +1,5 @@
 import { Op } from "sequelize";
+import { randomBytes } from "node:crypto";
 import { AppError } from "../../middleware/errorHandler.js";
 import { loadEnv } from "../../config/env.js";
 import {
@@ -6,6 +7,7 @@ import {
   PasswordResetOtp,
   GoogleOAuthTransaction,
   LicenseGrant,
+  AdminHandoffCode,
 } from "../../db/models/index.js";
 import {
   generateOtp,
@@ -31,7 +33,24 @@ import {
 } from "./auth.google.js";
 
 const OTP_TTL_MS = 10 * 60 * 1000;
+const ADMIN_HANDOFF_TTL_MS = 2 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
+export const LOCAL_DEMO_ADMIN_EMAIL = "demo-admin@ekotsa.test";
+
+export function localDemoAdminLoginEnabled(email: string, env: { NODE_ENV: string; LOCAL_DEMO_ADMIN_ENABLED: boolean; DEMO_ADMIN_CONFIRM_DISPOSABLE: boolean }) {
+  return env.NODE_ENV !== "production" &&
+    env.LOCAL_DEMO_ADMIN_ENABLED &&
+    env.DEMO_ADMIN_CONFIRM_DISPOSABLE &&
+    normalizeEmail(email) === LOCAL_DEMO_ADMIN_EMAIL;
+}
+
+export function passwordLoginMayIssueSession(
+  role: "USER" | "ADMIN",
+  email?: string,
+  env?: { NODE_ENV: string; LOCAL_DEMO_ADMIN_ENABLED: boolean; DEMO_ADMIN_CONFIRM_DISPOSABLE: boolean },
+) {
+  return role !== "ADMIN" || (!!email && !!env && localDemoAdminLoginEnabled(email, env));
+}
 
 export const AuthService = {
   async signup(input: { email: string; password: string; name?: string }) {
@@ -67,6 +86,9 @@ export const AuthService = {
     const user = await User.findOne({ where: { email } });
     if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
       throw new AppError(401, "Invalid credentials", "INVALID_CREDENTIALS");
+    }
+    if (!passwordLoginMayIssueSession(user.role, user.email, loadEnv())) {
+      throw new AppError(403, "Administrator login requires a second factor", "ADMIN_MFA_REQUIRED");
     }
 
     const token = await signSession({
@@ -187,6 +209,7 @@ export const AuthService = {
     await PasswordResetOtp.create({
       userId: user.id,
       otpHash: hashOtp(otp, user.id),
+      purpose: "PASSWORD_RESET",
       expiresAt: new Date(Date.now() + OTP_TTL_MS),
     });
 
@@ -222,6 +245,7 @@ export const AuthService = {
     await PasswordResetOtp.create({
       userId: user.id,
       otpHash: hashOtp(otp, user.id),
+      purpose,
       expiresAt: new Date(Date.now() + OTP_TTL_MS),
     });
 
@@ -255,6 +279,7 @@ export const AuthService = {
     const record = await PasswordResetOtp.findOne({
       where: {
         userId: user.id,
+        purpose,
         consumedAt: null,
         expiresAt: { [Op.gt]: new Date() },
       },
@@ -314,6 +339,7 @@ export const AuthService = {
     const record = await PasswordResetOtp.findOne({
       where: {
         userId: user.id,
+        purpose: "PASSWORD_RESET",
         consumedAt: null,
         expiresAt: { [Op.gt]: new Date() },
       },
@@ -335,7 +361,8 @@ export const AuthService = {
       throw new AppError(400, "Invalid or expired OTP", "OTP_INVALID");
     }
 
-    const resetToken = await signResetToken(user.id, user.email);
+    const resetToken = await signResetToken(user.id, user.email, record.id);
+    await record.update({ consumedAt: new Date() });
     return { verified: true, resetToken };
   },
 
@@ -346,6 +373,7 @@ export const AuthService = {
     otp?: string;
   }) {
     let userId: string;
+    let resetOtpId: string;
 
     if (input.resetToken) {
       const claims = await verifyResetToken(input.resetToken);
@@ -353,6 +381,16 @@ export const AuthService = {
         throw new AppError(400, "Invalid or expired reset token", "RESET_TOKEN_INVALID");
       }
       userId = claims.userId;
+      resetOtpId = claims.otpId;
+      const claimed = await PasswordResetOtp.findOne({ where: { id: resetOtpId, userId, purpose: "PASSWORD_RESET", usedAt: null } });
+      if (!claimed || claimed.expiresAt.getTime() < Date.now()) {
+        throw new AppError(400, "Invalid or expired reset token", "RESET_TOKEN_USED");
+      }
+      const consumed = await PasswordResetOtp.update(
+        { usedAt: new Date() },
+        { where: { id: resetOtpId, userId, purpose: "PASSWORD_RESET", usedAt: null } },
+      );
+      if (consumed[0] !== 1) throw new AppError(400, "Invalid or expired reset token", "RESET_TOKEN_USED");
     } else if (input.email && input.otp) {
       const verified = await this.verifyOtp({ email: input.email, otp: input.otp });
       const claims = await verifyResetToken(verified.resetToken);
@@ -360,6 +398,7 @@ export const AuthService = {
         throw new AppError(400, "Invalid or expired reset token", "RESET_TOKEN_INVALID");
       }
       userId = claims.userId;
+      resetOtpId = claims.otpId;
     } else {
       throw new AppError(400, "Provide resetToken, or email + otp", "VALIDATION_ERROR");
     }
@@ -370,7 +409,7 @@ export const AuthService = {
     await user.update({ passwordHash: await hashPassword(input.newPassword) });
     await PasswordResetOtp.update(
       { consumedAt: new Date() },
-      { where: { userId: user.id, consumedAt: null } },
+      { where: { userId: user.id, purpose: "PASSWORD_RESET", consumedAt: null } },
     );
 
     return { reset: true };
@@ -429,10 +468,15 @@ export const AuthService = {
       userId: user.id,
     });
 
+    const env = loadEnv();
+    const desktopCallbackUri = normalizeDesktopCallbackUri(transaction.desktopCallbackUri);
+    const browserExchangeCode = !desktopCallbackUri ? randomBytes(32).toString("base64url") : null;
     await transaction.update({
       userId: user.id,
       completedAt: new Date(),
       exchangeCodeHash: hashGoogleOAuthValue(activationSession.token),
+      browserExchangeCodeHash: browserExchangeCode ? hashGoogleOAuthValue(browserExchangeCode) : null,
+      browserExchangeExpiresAt: browserExchangeCode ? new Date(Date.now() + 5 * 60 * 1000) : null,
     });
 
     const token = await signSession({
@@ -441,8 +485,6 @@ export const AuthService = {
       role: user.role,
     });
 
-    const env = loadEnv();
-    const desktopCallbackUri = normalizeDesktopCallbackUri(transaction.desktopCallbackUri);
     const browserReturnTo = normalizeBrowserReturnTo(
       transaction.browserReturnTo,
       input.origin,
@@ -457,12 +499,12 @@ export const AuthService = {
       redirectUrl = url.toString();
     } else if (browserReturnTo) {
       const url = new URL(browserReturnTo);
-      url.searchParams.set("oauth", "google");
+      url.searchParams.set("exchange_code", browserExchangeCode || "");
       redirectUrl = url.toString();
     } else {
       // Default to dashboard after web Google login (not the login page).
       const url = new URL("/dashboard", env.FRONTEND_URL);
-      url.searchParams.set("oauth", "google");
+      url.searchParams.set("exchange_code", browserExchangeCode || "");
       redirectUrl = url.toString();
     }
 
@@ -472,6 +514,76 @@ export const AuthService = {
       activationToken: activationSession.token,
       redirectUrl,
     };
+  },
+
+  async exchangeGoogleBrowserCode(input: { exchangeCode: string; flow?: "BROWSER" | "ADMIN_HANDOFF" }): Promise<
+    | { role: "ADMIN"; adminExchangeCode: string }
+    | { role: "USER" | "ADMIN"; token: string; user: ReturnType<typeof publicUser> }
+  > {
+    const hash = hashGoogleOAuthValue(input.exchangeCode);
+    const flow = input.flow ?? "BROWSER";
+    const where = flow === "ADMIN_HANDOFF"
+      ? { provider: "GOOGLE", adminExchangeCodeHash: hash }
+      : { provider: "GOOGLE", browserExchangeCodeHash: hash };
+    const transaction = await GoogleOAuthTransaction.findOne({ where });
+    if (!transaction?.userId || !transaction.completedAt) throw new AppError(400, "Invalid OAuth exchange code.", "GOOGLE_EXCHANGE_INVALID");
+    const now = new Date();
+    if (flow === "ADMIN_HANDOFF") {
+      if (transaction.adminExchangeConsumedAt || !transaction.adminExchangeExpiresAt || transaction.adminExchangeExpiresAt < now) throw new AppError(400, "Invalid or expired OAuth exchange code.", "GOOGLE_EXCHANGE_INVALID");
+      const updated = await GoogleOAuthTransaction.update({ adminExchangeConsumedAt: now }, { where: { id: transaction.id, adminExchangeConsumedAt: null } });
+      if (updated[0] !== 1) throw new AppError(409, "OAuth exchange code already used.", "GOOGLE_EXCHANGE_CONSUMED");
+    } else {
+      if (transaction.browserExchangeConsumedAt || !transaction.browserExchangeExpiresAt || transaction.browserExchangeExpiresAt < now) throw new AppError(400, "Invalid or expired OAuth exchange code.", "GOOGLE_EXCHANGE_INVALID");
+      const updated = await GoogleOAuthTransaction.update({ browserExchangeConsumedAt: now }, { where: { id: transaction.id, browserExchangeConsumedAt: null } });
+      if (updated[0] !== 1) throw new AppError(409, "OAuth exchange code already used.", "GOOGLE_EXCHANGE_CONSUMED");
+    }
+    const user = await User.findByPk(transaction.userId);
+    if (!user) throw new AppError(400, "OAuth user no longer exists.", "GOOGLE_EXCHANGE_INVALID");
+    if (flow === "BROWSER" && user.role === "ADMIN") {
+      const adminCode = randomBytes(32).toString("base64url");
+      await transaction.update({ adminExchangeCodeHash: hashGoogleOAuthValue(adminCode), adminExchangeExpiresAt: new Date(Date.now() + 2 * 60 * 1000), adminExchangeConsumedAt: null });
+      return { role: user.role, adminExchangeCode: adminCode };
+    }
+    const token = await signSession({ sub: user.id, email: user.email, role: user.role });
+    return { role: user.role, token, user: publicUser(user) };
+  },
+
+  /**
+   * Issue a single-use, short-lived code that moves an ADMIN session from the public site
+   * (where password login happens) to the admin host. Only the code's hash is stored.
+   */
+  async createAdminHandoffCode(userId: string): Promise<{ exchangeCode: string; expiresAt: string }> {
+    const user = await User.findByPk(userId);
+    if (!user || user.role !== "ADMIN") throw new AppError(403, "Admin access required", "FORBIDDEN");
+    const exchangeCode = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + ADMIN_HANDOFF_TTL_MS);
+    await AdminHandoffCode.create({
+      userId: user.id,
+      codeHash: hashGoogleOAuthValue(exchangeCode),
+      expiresAt,
+      consumedAt: null,
+    });
+    // Opportunistic cleanup of this user's stale codes.
+    await AdminHandoffCode.destroy({ where: { userId: user.id, expiresAt: { [Op.lt]: new Date(Date.now() - 60 * 60 * 1000) } } });
+    return { exchangeCode, expiresAt: expiresAt.toISOString() };
+  },
+
+  /** Redeem an admin handoff code exactly once and mint the admin-host session. */
+  async exchangeAdminHandoffCode(exchangeCode: string): Promise<{ token: string; user: ReturnType<typeof publicUser> }> {
+    const now = new Date();
+    const record = await AdminHandoffCode.findOne({ where: { codeHash: hashGoogleOAuthValue(exchangeCode) } });
+    if (!record || record.consumedAt || record.expiresAt < now) {
+      throw new AppError(400, "Invalid or expired sign-in code.", "ADMIN_HANDOFF_INVALID");
+    }
+    const [updated] = await AdminHandoffCode.update(
+      { consumedAt: now },
+      { where: { id: record.id, consumedAt: null } },
+    );
+    if (updated !== 1) throw new AppError(409, "Sign-in code already used.", "ADMIN_HANDOFF_CONSUMED");
+    const user = await User.findByPk(record.userId);
+    if (!user || user.role !== "ADMIN") throw new AppError(403, "Admin access required", "FORBIDDEN");
+    const token = await signSession({ sub: user.id, email: user.email, role: user.role });
+    return { token, user: publicUser(user) };
   },
 
   /** @deprecated Prefer completeGoogleOAuth */

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireUserSession } from "../../middleware/requireUserSession.js";
 import { DownloadsController } from "./downloads.controller.js";
+import { rateLimit } from "../../middleware/rateLimit.js";
 
 /**
  * Wave C — downloads
@@ -11,5 +12,5 @@ import { DownloadsController } from "./downloads.controller.js";
 export const downloadsRouter = Router();
 
 downloadsRouter.post("/session", requireUserSession, DownloadsController.createSession);
-downloadsRouter.post("/authorize", DownloadsController.authorize);
-downloadsRouter.post("/", DownloadsController.record);
+downloadsRouter.post("/authorize", rateLimit({ keyPrefix: "download-authorize", windowMs: 60_000, max: 30 }), DownloadsController.authorize);
+downloadsRouter.post("/", rateLimit({ keyPrefix: "download-event", windowMs: 60_000, max: 30 }), DownloadsController.record);

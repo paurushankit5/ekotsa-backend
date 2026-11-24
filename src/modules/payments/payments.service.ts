@@ -1,20 +1,7 @@
-import { createId } from "@paralleldrive/cuid2";
-import { loadEnv } from "../../config/env.js";
 import { AppError } from "../../middleware/errorHandler.js";
-import {
-  CustomerRegistration,
-  Device,
-  PaymentSubmission,
-} from "../../db/models/index.js";
+import { PaymentSubmission } from "../../db/models/index.js";
 import { getObjectStorage } from "../../services/local-object-storage.js";
-import type { ProtectedUploadResult } from "../../services/object-storage.js";
 import { LicenseService } from "../licenses/licenses.service.js";
-
-const PLAN_AMOUNTS: Record<string, number> = {
-  trial: 0,
-  standard: 999900, // ₹9,999 in paise
-  annual: 999900,
-};
 
 type PaymentPublic = {
   id: string;
@@ -26,119 +13,13 @@ type PaymentPublic = {
 };
 
 export const PaymentsService = {
-  getQr(): {
-    upiId: string;
-    payeeName: string;
-    note: string;
-    qrImageUrl: string | null;
-  } {
-    const env = loadEnv();
-    return {
-      upiId: env.PAYMENT_UPI_ID ?? "ekotsa@upi",
-      payeeName: env.PAYMENT_PAYEE_NAME ?? "Ekotsa",
-      note: "Ekotsa Atithi license",
-      qrImageUrl: env.PAYMENT_QR_IMAGE_URL ?? null,
-    };
-  },
-
-  async startSubmission(input: {
-    userId: string;
-    plan: string;
-    referenceId?: string;
-    deviceId?: string;
-    contentType: string;
-    size: number;
-  }): Promise<{
-    payment: PaymentPublic & { plan: string; amountPaise: number };
-    upload: ProtectedUploadResult;
-  }> {
-    const amountPaise = PLAN_AMOUNTS[input.plan] ?? PLAN_AMOUNTS.standard;
-    const registration = await CustomerRegistration.findOne({
-      where: { linkedUserId: input.userId },
+  async assertProofAccess(input: { userId: string; role: "USER" | "ADMIN"; bucket: string; path: string }) {
+    if (input.role === "ADMIN") return;
+    const payment = await PaymentSubmission.findOne({
+      where: { userId: input.userId, proofBucket: input.bucket, proofPath: input.path },
+      attributes: ["id"],
     });
-
-    if (input.deviceId) {
-      const device = await Device.findByPk(input.deviceId);
-      if (!device || device.userId !== input.userId) {
-        throw new AppError(404, "Device not found", "DEVICE_NOT_FOUND");
-      }
-    }
-
-    const referenceId = input.referenceId?.trim() || `PAY-${createId().slice(0, 10).toUpperCase()}`;
-    const bucket = loadEnv().STORAGE_BUCKET ?? "payment-proofs";
-    const path = `${input.userId}/${createId()}`;
-
-    const upload = await getObjectStorage().createProtectedUpload({
-      bucket,
-      path,
-      contentType: input.contentType,
-      size: input.size,
-    });
-
-    const payment = await PaymentSubmission.create({
-      userId: input.userId,
-      registrationId: registration?.id ?? null,
-      organizationId: registration?.organizationId ?? null,
-      deviceId: input.deviceId ?? null,
-      plan: input.plan,
-      amountPaise,
-      referenceId,
-      proofPath: path,
-      proofBucket: bucket,
-      status: "PENDING",
-    });
-
-    return {
-      payment: {
-        id: payment.id,
-        plan: payment.plan,
-        amountPaise: payment.amountPaise,
-        referenceId: payment.referenceId,
-        status: payment.status,
-      },
-      upload,
-    };
-  },
-
-  async confirm(input: {
-    userId: string;
-    paymentId: string;
-    body?: Buffer;
-    contentType?: string;
-  }): Promise<{ payment: PaymentPublic }> {
-    const payment = await PaymentSubmission.findByPk(input.paymentId);
-    if (!payment || payment.userId !== input.userId) {
-      throw new AppError(404, "Payment not found", "PAYMENT_NOT_FOUND");
-    }
-    if (!payment.proofPath || !payment.proofBucket) {
-      throw new AppError(400, "Payment has no proof path", "PAYMENT_NO_PROOF");
-    }
-
-    if (input.body && input.body.length > 0) {
-      await getObjectStorage().putObject({
-        bucket: payment.proofBucket,
-        path: payment.proofPath,
-        contentType: input.contentType ?? "application/octet-stream",
-        body: input.body,
-      });
-    } else {
-      const info = await getObjectStorage().getProtectedObjectInfo({
-        bucket: payment.proofBucket,
-        path: payment.proofPath,
-      });
-      if (!info || info.size <= 0) {
-        throw new AppError(400, "Payment proof not uploaded yet", "PROOF_MISSING");
-      }
-    }
-
-    await payment.update({ status: "UNDER_REVIEW" });
-    return {
-      payment: {
-        id: payment.id,
-        status: payment.status,
-        referenceId: payment.referenceId,
-      },
-    };
+    if (!payment) throw new AppError(404, "Proof not found", "PROOF_NOT_FOUND");
   },
 
   async list(input: { status?: string; limit?: number }): Promise<{

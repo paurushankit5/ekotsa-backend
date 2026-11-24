@@ -6,6 +6,13 @@ export type Env = {
   DATABASE_URL: string;
   CORS_ORIGINS: string;
   JWT_SECRET: string;
+  /** ES256 session signing key (base64url PKCS#8 DER or PEM). Run: npm run keys:auth */
+  AUTH_JWT_PRIVATE_KEY?: string;
+  AUTH_JWT_KEY_ID?: string;
+  /** Retired public keys still accepted during rotation: JSON {"kid":"<base64url SPKI DER or PEM>"} */
+  AUTH_JWT_PREVIOUS_PUBLIC_KEYS?: string;
+  /** Temporary bridge: also accept old HS256 (JWT_SECRET) session tokens. Default false. */
+  AUTH_JWT_ACCEPT_LEGACY_HS256: boolean;
   OTP_PEPPER?: string;
   AUTH_COOKIE_NAME: string;
   ADMIN_AUTH_COOKIE_NAME: string;
@@ -48,6 +55,11 @@ export type Env = {
   DEVICE_RESET_COOLDOWN_DAYS: number;
   DEVICE_RESET_MAX_REQUESTS_30D: number;
   DEVICE_RESET_REQUIRE_DEVICE_ID: boolean;
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
+  TRUST_PROXY_HOPS: number;
+  LOCAL_DEMO_ADMIN_ENABLED: boolean;
+  DEMO_ADMIN_CONFIRM_DISPOSABLE: boolean;
 };
 
 const envSchema = Joi.object<Env>({
@@ -57,6 +69,10 @@ const envSchema = Joi.object<Env>({
   CORS_ORIGINS: Joi.string().default("http://localhost:3000,http://localhost:3001"),
 
   JWT_SECRET: Joi.string().min(16).required(),
+  AUTH_JWT_PRIVATE_KEY: Joi.string().min(32).optional(),
+  AUTH_JWT_KEY_ID: Joi.string().pattern(/^[A-Za-z0-9._-]{1,64}$/).optional(),
+  AUTH_JWT_PREVIOUS_PUBLIC_KEYS: Joi.string().optional(),
+  AUTH_JWT_ACCEPT_LEGACY_HS256: Joi.boolean().truthy("true").falsy("false").default(false),
   OTP_PEPPER: Joi.string().min(8).optional(),
   AUTH_COOKIE_NAME: Joi.string().default("ekotsa_session"),
   ADMIN_AUTH_COOKIE_NAME: Joi.string().default("ekotsa_admin_session"),
@@ -105,6 +121,11 @@ const envSchema = Joi.object<Env>({
   DEVICE_RESET_COOLDOWN_DAYS: Joi.number().integer().min(0).max(90).default(7),
   DEVICE_RESET_MAX_REQUESTS_30D: Joi.number().integer().min(0).max(20).default(2),
   DEVICE_RESET_REQUIRE_DEVICE_ID: Joi.boolean().truthy("true").falsy("false").default(false),
+  UPSTASH_REDIS_REST_URL: Joi.string().uri().optional(),
+  UPSTASH_REDIS_REST_TOKEN: Joi.string().optional(),
+  TRUST_PROXY_HOPS: Joi.number().integer().min(0).default(0),
+  LOCAL_DEMO_ADMIN_ENABLED: Joi.boolean().truthy("true").falsy("false").default(false),
+  DEMO_ADMIN_CONFIRM_DISPOSABLE: Joi.boolean().truthy("true").falsy("false").default(false),
 }).unknown(true);
 
 let cached: Env | null = null;

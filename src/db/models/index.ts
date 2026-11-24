@@ -1,6 +1,7 @@
 import { sequelize } from "../sequelize.js";
 import { initUserModel, User } from "./User.js";
 import { initPasswordResetOtpModel, PasswordResetOtp } from "./PasswordResetOtp.js";
+import { initAdminHandoffCodeModel, AdminHandoffCode } from "./AdminHandoffCode.js";
 import { initDeviceModel, Device } from "./Device.js";
 import { initDeviceAuthTokenModel, DeviceAuthToken } from "./DeviceAuthToken.js";
 import { initActivationSessionModel, ActivationSession } from "./ActivationSession.js";
@@ -62,6 +63,7 @@ import { initAppReleaseModel, AppRelease } from "./AppRelease.js";
 
 initUserModel(sequelize);
 initPasswordResetOtpModel(sequelize);
+initAdminHandoffCodeModel(sequelize);
 initDeviceModel(sequelize);
 initDeviceAuthTokenModel(sequelize);
 initActivationSessionModel(sequelize);
@@ -95,6 +97,8 @@ initAppReleaseModel(sequelize);
 
 User.hasMany(PasswordResetOtp, { foreignKey: "userId", as: "resetOtps" });
 PasswordResetOtp.belongsTo(User, { foreignKey: "userId", as: "user" });
+User.hasMany(AdminHandoffCode, { foreignKey: "userId", as: "adminHandoffCodes" });
+AdminHandoffCode.belongsTo(User, { foreignKey: "userId", as: "user" });
 
 User.hasMany(Device, { foreignKey: "userId", as: "devices" });
 Device.belongsTo(User, { foreignKey: "userId", as: "user" });
@@ -202,6 +206,7 @@ export {
   sequelize,
   User,
   PasswordResetOtp,
+  AdminHandoffCode,
   Device,
   DeviceAuthToken,
   ActivationSession,

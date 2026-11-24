@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { Joi, validateOrThrow } from "../../utils/validate.js";
 import { AppError } from "../../middleware/errorHandler.js";
-import { loadEnv } from "../../config/env.js";
 import { NotificationsService } from "./notifications.service.js";
+import { requireCron } from "../../middleware/requireCron.js";
 
 const idSchema = Joi.object({
   id: Joi.string().required(),
@@ -14,17 +14,6 @@ const listSchema = Joi.object({
   take: Joi.number().integer().min(1).max(300).default(100),
 });
 
-function requireCron(req: Request) {
-  const env = loadEnv();
-  const expected = env.CRON_SECRET;
-  if (!expected) {
-    throw new AppError(503, "CRON_SECRET not configured", "CRON_NOT_CONFIGURED");
-  }
-  const token = req.header("x-cron-token");
-  if (!token || token !== expected) {
-    throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-  }
-}
 
 export const NotificationsController = {
   async list(req: Request, res: Response, next: NextFunction) {

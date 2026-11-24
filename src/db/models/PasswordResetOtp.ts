@@ -15,8 +15,10 @@ export class PasswordResetOtp extends Model<
   declare id: CreationOptional<string>;
   declare userId: string;
   declare otpHash: string;
+  declare purpose: CreationOptional<"PASSWORD_RESET" | "LOGIN" | "DEVICE_ACTIVATION">;
   declare expiresAt: Date;
   declare consumedAt: CreationOptional<Date | null>;
+  declare usedAt: CreationOptional<Date | null>;
   declare attemptCount: CreationOptional<number>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
@@ -38,11 +40,20 @@ export function initPasswordResetOtpModel(sequelize: Sequelize): typeof Password
         type: DataTypes.STRING,
         allowNull: false,
       },
+      purpose: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: "PASSWORD_RESET",
+      },
       expiresAt: {
         type: DataTypes.DATE,
         allowNull: false,
       },
       consumedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      usedAt: {
         type: DataTypes.DATE,
         allowNull: true,
       },

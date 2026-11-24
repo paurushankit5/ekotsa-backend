@@ -3,6 +3,7 @@ import { Joi, validateOrThrow } from "../../utils/validate.js";
 import { loadEnv } from "../../config/env.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { AuthService } from "./auth.service.js";
+import { getPublicJwks } from "./auth.session-keys.js";
 import {
   authTokenPayload,
   clearSessionCookie,
@@ -23,7 +24,9 @@ const signupSchema = Joi.object({
 });
 
 const loginSchema = Joi.object({
-  email: Joi.string().email().max(254).required(),
+  // Login only looks up an existing account, so skip Joi's public-TLD allowlist.
+  // Otherwise reserved domains such as the local demo admin's `@ekotsa.test` can never sign in.
+  email: Joi.string().email({ tlds: { allow: false } }).max(254).required(),
   password: Joi.string().min(1).max(200).required(),
 });
 
@@ -72,6 +75,15 @@ const googleStartSchema = Joi.object({
 
 const googleExchangeSchema = Joi.object({
   handoffCode: Joi.string().min(20).max(500).required(),
+});
+
+const adminHandoffExchangeSchema = Joi.object({
+  exchangeCode: Joi.string().min(20).max(500).required(),
+});
+
+const googleBrowserExchangeSchema = Joi.object({
+  exchangeCode: Joi.string().min(20).max(500).required(),
+  flow: Joi.string().valid("BROWSER", "ADMIN_HANDOFF").default("BROWSER"),
 });
 
 function requestOrigin(req: Request): string {
@@ -286,14 +298,19 @@ export const AuthController = {
         state,
         origin: requestOrigin(req),
       });
-      // Cookie mirror for first navigation; FE /auth/callback stores Bearer JWT.
-      // Token MUST be in the query string (not hash): Next.js rewrites strip URL
-      // fragments from upstream Location headers, which broke Google login.
-      setSessionCookie(res, result.token, result.user.role);
       const target = new URL(result.redirectUrl);
-      const callback = new URL("/auth/callback", `${target.protocol}//${target.host}`);
+      // Desktop deep links (hotel-manager://…) go straight back to the app.
+      if (target.protocol !== "http:" && target.protocol !== "https:") {
+        res.redirect(target.toString());
+        return;
+      }
+      // Browser: the website's /auth/callback reads `exchange_code` as its own parameter,
+      // so it must not be buried inside `redirect`.
+      const exchangeCode = target.searchParams.get("exchange_code");
+      target.searchParams.delete("exchange_code");
+      const callback = new URL("/auth/callback", target.origin);
       callback.searchParams.set("redirect", `${target.pathname}${target.search}`);
-      callback.searchParams.set("access_token", result.token);
+      if (exchangeCode) callback.searchParams.set("exchange_code", exchangeCode);
       res.redirect(callback.toString());
     } catch (error) {
       next(error);
@@ -323,6 +340,59 @@ export const AuthController = {
           activationSession: result.activationSession,
         },
       });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** Public keys for verifying session tokens (JWKS). */
+  async jwks(_req: Request, res: Response, next: NextFunction) {
+    try {
+      res.setHeader("Cache-Control", "public, max-age=300");
+      res.json(getPublicJwks(loadEnv()));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** Signed-in ADMIN (on the public site) asks for a one-time code to carry the session to the admin host. */
+  async createAdminHandoff(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.userSession) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const result = await AuthService.createAdminHandoffCode(req.userSession.userId);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** Admin host redeems the one-time code for an ADMIN session. */
+  async exchangeAdminHandoff(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = validateOrThrow(adminHandoffExchangeSchema, req.body);
+      const result = await AuthService.exchangeAdminHandoffCode(body.exchangeCode);
+      const auth = authTokenPayload(result.token, result.user);
+      setSessionCookie(res, result.token, result.user.role);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...auth, data: auth });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async googleBrowserExchange(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = validateOrThrow(googleBrowserExchangeSchema, req.body);
+      const result = await AuthService.exchangeGoogleBrowserCode(body);
+      if (result.role === "ADMIN" && "adminExchangeCode" in result) {
+        res.json({ ok: true, data: { role: result.role, adminExchangeCode: result.adminExchangeCode } });
+        return;
+      }
+      if (!result.token || !result.user) throw new AppError(400, "Invalid OAuth exchange.", "GOOGLE_EXCHANGE_INVALID");
+      const auth = authTokenPayload(result.token, result.user);
+      setSessionCookie(res, result.token, result.user.role);
+      res.json({ ok: true, ...auth, data: auth });
     } catch (error) {
       next(error);
     }

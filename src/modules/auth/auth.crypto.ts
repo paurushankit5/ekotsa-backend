@@ -4,6 +4,7 @@ import { SignJWT, jwtVerify } from "jose";
 import type { Response } from "express";
 import { loadEnv, getOtpPepper, type Env } from "../../config/env.js";
 import type { UserRole } from "../../db/models/User.js";
+import { getSessionKeys, SESSION_JWT_ALG } from "./auth.session-keys.js";
 
 const encoder = new TextEncoder();
 
@@ -43,22 +44,35 @@ export type SessionClaims = {
   role: UserRole;
 };
 
+/** Session tokens are signed with the backend's ES256 private key (see auth.session-keys.ts). */
 export async function signSession(claims: SessionClaims, env: Env = loadEnv()) {
   const maxAgeSeconds = claims.role === "ADMIN" ? 60 * 60 * 12 : 60 * 60 * 24 * 7;
   const now = Math.floor(Date.now() / 1000);
+  const { kid, privateKey } = getSessionKeys(env);
   return new SignJWT({ email: claims.email, role: claims.role })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setProtectedHeader({ alg: SESSION_JWT_ALG, typ: "JWT", kid })
     .setSubject(claims.sub)
     .setIssuedAt(now)
     .setExpirationTime(now + maxAgeSeconds)
-    .sign(encoder.encode(env.JWT_SECRET));
+    .sign(privateKey);
 }
 
 export async function verifySession(token: string, env: Env = loadEnv()) {
   try {
-    const { payload } = await jwtVerify(token, encoder.encode(env.JWT_SECRET), {
-      algorithms: ["HS256"],
-    });
+    const { publicKeys } = getSessionKeys(env);
+    const legacy = env.AUTH_JWT_ACCEPT_LEGACY_HS256;
+    const { payload } = await jwtVerify(
+      token,
+      (header) => {
+        if (header.alg === SESSION_JWT_ALG && header.kid && publicKeys.has(header.kid)) {
+          return publicKeys.get(header.kid)!;
+        }
+        // Transition bridge only: old shared-secret tokens (still no reset tokens — see role check).
+        if (legacy && header.alg === "HS256") return encoder.encode(env.JWT_SECRET);
+        throw new Error("Unknown session signing key");
+      },
+      { algorithms: legacy ? [SESSION_JWT_ALG, "HS256"] : [SESSION_JWT_ALG] },
+    );
     if (!payload.sub || typeof payload.sub !== "string") return null;
     if (typeof payload.email !== "string") return null;
     if (payload.role !== "USER" && payload.role !== "ADMIN") return null;
@@ -73,9 +87,9 @@ export async function verifySession(token: string, env: Env = loadEnv()) {
 }
 
 /** Short-lived token after OTP verify, used for reset-password */
-export async function signResetToken(userId: string, email: string, env: Env = loadEnv()) {
+export async function signResetToken(userId: string, email: string, otpId: string, env: Env = loadEnv()) {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ email, purpose: "password_reset" })
+  return new SignJWT({ email, purpose: "password_reset", otpId })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(userId)
     .setIssuedAt(now)
@@ -91,7 +105,8 @@ export async function verifyResetToken(token: string, env: Env = loadEnv()) {
     if (payload.purpose !== "password_reset") return null;
     if (!payload.sub || typeof payload.sub !== "string") return null;
     if (typeof payload.email !== "string") return null;
-    return { userId: payload.sub, email: payload.email };
+    if (typeof payload.otpId !== "string" || !payload.otpId) return null;
+    return { userId: payload.sub, email: payload.email, otpId: payload.otpId };
   } catch {
     return null;
   }

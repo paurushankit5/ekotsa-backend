@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { Op } from "sequelize";
 import { ActivationCode, Device } from "../../db/models/index.js";
 import { AppError } from "../../middleware/errorHandler.js";
@@ -8,61 +8,11 @@ function hashCode(code: string) {
   return createHash("sha256").update(code.trim().toUpperCase()).digest("base64url");
 }
 
-function makeCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = randomBytes(16);
-  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]!);
-  const raw = chars.join("");
-  const parts = [raw.slice(0, 5), raw.slice(5, 10), raw.slice(10, 15), raw.slice(15, 20)].filter(
-    Boolean,
-  );
-  return `EKOTSA-${parts.join("-")}`;
-}
-
+/**
+ * Plan activation-code generation was removed (no plan-based sales). Listing and
+ * redeeming codes that already exist remain until the UI phase decides their fate.
+ */
 export const ActivationCodesService = {
-  async generate(input: {
-    plan: string;
-    expiresInDays?: number;
-  }): Promise<{
-    activation: {
-      id: string;
-      plan: string;
-      code: string;
-      expiresAt: string;
-      createdAt: string;
-    };
-  }> {
-    const days = input.expiresInDays ?? 365;
-    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const code = makeCode();
-      const codeHash = hashCode(code);
-      try {
-        const record = await ActivationCode.create({
-          codeHash,
-          plan: input.plan,
-          expiresAt,
-          redeemedByUserId: null,
-          redeemedAt: null,
-        });
-        return {
-          activation: {
-            id: record.id,
-            plan: record.plan,
-            code,
-            expiresAt: record.expiresAt.toISOString(),
-            createdAt: record.createdAt.toISOString(),
-          },
-        };
-      } catch {
-        // retry on unique hash collision
-      }
-    }
-
-    throw new AppError(500, "Failed to generate activation code", "CODE_GEN_FAILED");
-  },
-
   async list(input: { limit?: number }): Promise<{
     codes: Array<{
       id: string;

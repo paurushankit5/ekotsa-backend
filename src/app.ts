@@ -12,6 +12,7 @@ export function createApp(env: Env) {
   const app = express();
 
   app.disable("x-powered-by");
+  app.set("trust proxy", env.TRUST_PROXY_HOPS);
   app.use(helmet());
   app.use(
     cors({
@@ -21,7 +22,19 @@ export function createApp(env: Env) {
   );
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
-  app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
+  morgan.token("safe-url", (req) => {
+    try {
+      const request = req as { originalUrl?: string; url?: string };
+      return new URL(request.originalUrl || request.url || "/", "http://localhost").pathname;
+    } catch {
+      return "[invalid-url]";
+    }
+  });
+  app.use(morgan(
+    env.NODE_ENV === "production"
+      ? ':remote-addr - :remote-user [:date[iso]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"'
+      : ':method :safe-url :status :response-time ms',
+  ));
 
   app.get("/", (_req, res) => {
     res.json({

@@ -2,9 +2,22 @@ import "dotenv/config";
 import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
 import { sequelize } from "./db/models/index.js";
+import { getSessionKeys } from "./modules/auth/auth.session-keys.js";
+import { collectProductionIssues } from "./config/production-checks.js";
 
 async function main() {
   const env = loadEnv();
+  // Fail fast if session signing keys are missing or invalid (run: npm run keys:auth).
+  getSessionKeys(env);
+  if (env.NODE_ENV === "production") {
+    const { errors, warnings } = collectProductionIssues(env);
+    for (const w of warnings) console.warn(`[ekotsa-backend] config warning: ${w.variable}: ${w.message}`);
+    if (errors.length) {
+      throw new Error(
+        `Production configuration is invalid:\n${errors.map((e) => `  - ${e.variable}: ${e.message}`).join("\n")}`,
+      );
+    }
+  }
   const app = createApp(env);
 
   const server = app.listen(env.PORT, () => {

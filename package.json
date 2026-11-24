@@ -14,7 +14,12 @@
     "db:migration:create": "tsx scripts/create-migration.ts",
     "db:sync": "tsx src/db/sync.ts",
     "keys:license": "node scripts/generate-license-keys.mjs",
-    "make-admin": "tsx scripts/make-admin.ts"
+    "make-admin": "tsx scripts/make-admin.ts",
+    "demo-admin": "tsx scripts/demo-admin.ts",
+    "cms:import:hospitality": "tsx scripts/import-hospitality-articles.ts",
+    "keys:auth": "node scripts/generate-auth-keys.mjs",
+    "test": "tsx --import ./test/setup-env.ts --test \"test/*.test.ts\"",
+    "check:env:production": "tsx scripts/check-production-env.ts"
   },
   "engines": {
     "node": ">=20"

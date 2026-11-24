@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { ContactController } from "./contact.controller.js";
+import { rateLimit } from "../../middleware/rateLimit.js";
 
 /**
  * Wave F — contact + business assessment
@@ -9,5 +10,5 @@ import { ContactController } from "./contact.controller.js";
  */
 export const contactRouter = Router();
 
-contactRouter.post("/", ContactController.contact);
-contactRouter.post("/business-assessment", ContactController.businessAssessment);
+contactRouter.post("/", rateLimit({ keyPrefix: "contact", windowMs: 60_000, max: 10 }), ContactController.contact);
+contactRouter.post("/business-assessment", rateLimit({ keyPrefix: "business-assessment", windowMs: 60_000, max: 10 }), ContactController.businessAssessment);

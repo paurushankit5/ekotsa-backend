@@ -9,7 +9,7 @@ import {
   unlinkSync,
   renameSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative, resolve, sep } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
@@ -58,7 +58,13 @@ export class LocalObjectStorage implements ObjectStorage {
   }
 
   diskPath(bucket: string, path: string) {
-    return join(this.root, bucket, path);
+    const root = resolve(this.root);
+    const candidate = resolve(root, bucket, path);
+    const rel = relative(root, candidate);
+    if (!rel || rel.startsWith("..") || rel.startsWith(`..${sep}`)) {
+      throw new Error("Unsafe storage path");
+    }
+    return join(root, rel);
   }
 
   async createProtectedUpload(input: {
@@ -108,6 +114,7 @@ export class LocalObjectStorage implements ObjectStorage {
       return false;
     }
     if (entry.bucket !== bucket || entry.path !== path) return false;
+    uploadTokens().delete(token);
     return true;
   }
 

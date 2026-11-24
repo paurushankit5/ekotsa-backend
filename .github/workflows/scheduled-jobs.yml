@@ -1,0 +1,60 @@
+name: Scheduled jobs
+
+# Host-agnostic scheduler for ekotsa-backend's internal job endpoints.
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   EKOTSA_API_BASE  e.g. https://api.ekotsa.com
+#   CRON_SECRET      same value as the backend's CRON_SECRET
+# Until both are set, every run is skipped (no failure).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # notifications outbox + scheduled CMS publishing
+    - cron: "30 3 * * *" # daily 03:30 UTC (09:00 IST): licence-expiry reminders
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        type: choice
+        options: [frequent, daily]
+        default: frequent
+
+concurrency:
+  group: scheduled-jobs-${{ github.event.schedule || inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      API_BASE: ${{ secrets.EKOTSA_API_BASE }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      DAILY: ${{ github.event.schedule == '30 3 * * *' || inputs.job == 'daily' }}
+    steps:
+      - name: Skip until configured
+        id: cfg
+        run: |
+          if [ -z "$API_BASE" ] || [ -z "$CRON_SECRET" ]; then
+            echo "EKOTSA_API_BASE / CRON_SECRET secrets not set — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Call job endpoints
+        if: steps.cfg.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          call() {
+            local path="$1"
+            local code
+            code=$(curl -sS -o /tmp/out.json -w '%{http_code}' --max-time 120 \
+              -X POST -H "x-cron-token: ${CRON_SECRET}" -H "Content-Type: application/json" \
+              -d '{}' "${API_BASE%/}${path}")
+            echo "${path} -> HTTP ${code}"
+            if [ "$code" != "200" ]; then cat /tmp/out.json; echo; return 1; fi
+          }
+          if [ "$DAILY" = "true" ]; then
+            call /api/v1/internal/notifications/schedule
+          else
+            call /api/v1/internal/notifications/process
+            call /api/v1/internal/cms/process-schedules
+          fi

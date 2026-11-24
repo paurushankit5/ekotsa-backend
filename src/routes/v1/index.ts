@@ -12,7 +12,6 @@ import { activationRouter } from "../../modules/devices/activation.routes.js";
 import { downloadsRouter } from "../../modules/downloads/downloads.routes.js";
 import { releasesRouter } from "../../modules/releases/releases.routes.js";
 import { paymentsRouter } from "../../modules/payments/payments.routes.js";
-import { PaymentsController } from "../../modules/payments/payments.controller.js";
 import { requireUserSession } from "../../middleware/requireUserSession.js";
 import { recoveryRouter } from "../../modules/recovery/recovery.routes.js";
 import { portalRouter } from "../../modules/portal/portal.routes.js";
@@ -25,6 +24,7 @@ import { ContactController } from "../../modules/contact/contact.controller.js";
 import { cmsInternalRouter, cmsRouter } from "../../modules/cms/cms.routes.js";
 import { DeviceResetController } from "../../modules/admin/admin.ops.controller.js";
 import { ActivationCodesController } from "../../modules/licenses/activation-codes.controller.js";
+import { rateLimit } from "../../middleware/rateLimit.js";
 
 /**
  * Canonical public API. Also mounted at /api/v1 for Atithi / website compatibility.
@@ -38,18 +38,19 @@ v1Router.use("/platform", platformRouter);
 v1Router.use("/auth", authRouter);
 
 // Website-compatible flat auth aliases (ekotsa-website /api/v1/login etc.)
-v1Router.post("/signup", AuthController.signup);
-v1Router.post("/login", AuthController.login);
+v1Router.post("/signup", rateLimit({ keyPrefix: "auth-signup-alias", windowMs: 60_000, max: 10 }), AuthController.signup);
+v1Router.post("/login", rateLimit({ keyPrefix: "auth-login-alias", windowMs: 60_000, max: 20 }), AuthController.login);
 v1Router.post("/logout", AuthController.logout);
 v1Router.get("/me", AuthController.me);
-v1Router.post("/send-otp", AuthController.forgotPassword);
-v1Router.post("/forgot-password", AuthController.forgotPassword);
-v1Router.post("/verify-otp", AuthController.verifyOtp);
-v1Router.post("/reset-password", AuthController.resetPassword);
-v1Router.get("/oauth/google/start", AuthController.googleStart);
-v1Router.post("/oauth/google/start", AuthController.googleStart);
+v1Router.post("/send-otp", rateLimit({ keyPrefix: "auth-forgot-alias", windowMs: 60_000, max: 5 }), AuthController.forgotPassword);
+v1Router.post("/forgot-password", rateLimit({ keyPrefix: "auth-forgot-alias", windowMs: 60_000, max: 5 }), AuthController.forgotPassword);
+v1Router.post("/verify-otp", rateLimit({ keyPrefix: "auth-reset-otp-alias", windowMs: 60_000, max: 20 }), AuthController.verifyOtp);
+v1Router.post("/reset-password", rateLimit({ keyPrefix: "auth-reset-alias", windowMs: 60_000, max: 10 }), AuthController.resetPassword);
+v1Router.get("/oauth/google/start", rateLimit({ keyPrefix: "auth-google-start-alias", windowMs: 60_000, max: 20 }), AuthController.googleStart);
+v1Router.post("/oauth/google/start", rateLimit({ keyPrefix: "auth-google-start-alias", windowMs: 60_000, max: 20 }), AuthController.googleStart);
 v1Router.get("/oauth/google/callback", AuthController.googleCallback);
-v1Router.post("/oauth/google/exchange", AuthController.googleExchange);
+v1Router.post("/oauth/google/exchange", rateLimit({ keyPrefix: "auth-google-exchange-alias", windowMs: 60_000, max: 20 }), AuthController.googleExchange);
+v1Router.post("/oauth/google/exchange-browser", rateLimit({ keyPrefix: "auth-google-browser-exchange-alias", windowMs: 60_000, max: 20 }), AuthController.googleBrowserExchange);
 
 v1Router.use("/activation", activationRouter);
 v1Router.use("/organizations", organizationsRouter);
@@ -65,10 +66,6 @@ v1Router.use("/downloads", downloadsRouter);
 v1Router.use("/releases", releasesRouter);
 v1Router.use("/payments", paymentsRouter);
 
-v1Router.get("/payment-qr", PaymentsController.qr);
-v1Router.post("/submit-payment", requireUserSession, PaymentsController.submit);
-v1Router.post("/submit-payment/confirm", requireUserSession, PaymentsController.confirm);
-
 v1Router.post("/verify-code", requireUserSession, ActivationCodesController.redeem);
 
 v1Router.use("/recovery", recoveryRouter);
@@ -78,7 +75,7 @@ v1Router.use("/notifications", notificationsRouter);
 v1Router.use("/internal/notifications", notificationsInternalRouter);
 v1Router.use("/internal/cms", cmsInternalRouter);
 
-v1Router.post("/contact", ContactController.contact);
-v1Router.post("/business-assessment", ContactController.businessAssessment);
+v1Router.post("/contact", rateLimit({ keyPrefix: "contact-alias", windowMs: 60_000, max: 10 }), ContactController.contact);
+v1Router.post("/business-assessment", rateLimit({ keyPrefix: "business-assessment-alias", windowMs: 60_000, max: 10 }), ContactController.businessAssessment);
 
 v1Router.use("/cms", cmsRouter);

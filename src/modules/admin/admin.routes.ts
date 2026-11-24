@@ -40,7 +40,6 @@ adminRouter.get("/devices", requireAdminSession, DeviceAdminController.list);
 adminRouter.post("/devices/revoke", requireAdminSession, DeviceAdminController.revoke);
 
 adminRouter.get("/codes", requireAdminSession, ActivationCodesController.list);
-adminRouter.post("/generate-code", requireAdminSession, ActivationCodesController.generate);
 
 adminRouter.get("/recoveries", requireAdminSession, RecoveryController.listArtifacts);
 adminRouter.post(

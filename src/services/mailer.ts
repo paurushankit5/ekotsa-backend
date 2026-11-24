@@ -10,6 +10,9 @@ export async function sendEmail(input: {
   const env = loadEnv();
 
   if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
+    if (env.NODE_ENV === "production") {
+      throw new Error("SMTP_CONFIGURATION_MISSING");
+    }
     console.log(
       `[ekotsa-backend] email → ${input.to}\nSubject: ${input.subject}\n${input.text}`,
     );

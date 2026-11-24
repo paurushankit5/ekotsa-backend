@@ -6,11 +6,11 @@ import { CmsContentService } from "./cms.content.service.js";
 import { CmsOpsService } from "./cms.ops.service.js";
 import { CmsPreviewService } from "./cms.preview.service.js";
 import { CmsSchedulerService } from "./cms.scheduler.service.js";
+import { requireCron } from "../../middleware/requireCron.js";
 import {
   getCmsWorkflowActionPermission,
   type CmsWorkflowActionName,
 } from "./cms.workflow.js";
-import { loadEnv } from "../../config/env.js";
 
 function actorFrom(req: Request) {
   if (!req.userSession) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
@@ -202,17 +202,6 @@ const previewBodySchema = Joi.object({
   expiresInHours: Joi.number().integer().min(1).max(720).optional(),
 });
 
-function requireCron(req: Request): void {
-  const env = loadEnv();
-  const expected = env.CRON_SECRET;
-  if (!expected) {
-    throw new AppError(503, "CRON_SECRET not configured", "CRON_NOT_CONFIGURED");
-  }
-  const token = req.header("x-cron-token");
-  if (!token || token !== expected) {
-    throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-  }
-}
 
 export const CmsAdminController = {
   async listArticles(req: Request, res: Response, next: NextFunction) {

@@ -59,7 +59,14 @@ export const RegistrationsController = {
     try {
       const query = validateOrThrow(statusSchema, req.query);
       if (query.email || query.registrationId) {
+        if (!req.userSession) throw new AppError(401, "Login required", "UNAUTHORIZED");
+        if (query.email && query.email.trim().toLowerCase() !== req.userSession.email.toLowerCase()) {
+          throw new AppError(403, "Registration access denied", "FORBIDDEN");
+        }
         const result = await RegistrationsService.status(query);
+        if (query.registrationId && result.registration.linkedUserId !== req.userSession.userId) {
+          throw new AppError(403, "Registration access denied", "FORBIDDEN");
+        }
         res.json({ ok: true, ...result });
         return;
       }
