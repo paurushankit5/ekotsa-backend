@@ -11,6 +11,8 @@ export const ContactService = {
     phone: string;
     whatsapp: string;
     requirement?: string | null;
+    /** Under-18 submitter: store but do not act until a parent/guardian approves. */
+    holdForGuardian?: boolean;
   }): Promise<{ leadId: string; emailSent: boolean }> {
     const lead = await ContactLead.create({
       name: input.name.trim(),
@@ -21,13 +23,13 @@ export const ContactService = {
       whatsapp: input.whatsapp.trim(),
       requirement: input.requirement?.trim() || null,
       source: "contact_form",
-      status: "NEW",
+      status: input.holdForGuardian ? "PENDING_GUARDIAN_CONSENT" : "NEW",
     });
 
     let emailSent = false;
     const env = loadEnv();
     const to = env.SMTP_TO;
-    if (to && env.SMTP_USER) {
+    if (to && env.SMTP_USER && !input.holdForGuardian) {
       try {
         const result = await sendEmail({
           to,
@@ -63,6 +65,7 @@ export const ContactService = {
     phone: string;
     industry?: string | null;
     requirement: string;
+    holdForGuardian?: boolean;
   }): Promise<{ leadId: string }> {
     const phone = input.phone.trim();
     const ccMatch = phone.match(/^(\+\d{1,4})\s*/);
@@ -81,7 +84,7 @@ export const ContactService = {
       whatsapp: phone,
       requirement,
       source: "business_assessment",
-      status: "NEW",
+      status: input.holdForGuardian ? "PENDING_GUARDIAN_CONSENT" : "NEW",
     });
 
     return { leadId: lead.id };

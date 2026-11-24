@@ -4,6 +4,9 @@ import { loadEnv } from "../../config/env.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { AuthService } from "./auth.service.js";
 import { getPublicJwks } from "./auth.session-keys.js";
+import { privacyFields, type PrivacyInput } from "../privacy/privacy.schema.js";
+import { PrivacyService } from "../privacy/privacy.service.js";
+import { assertCurrentNotice } from "../privacy/notices.js";
 import {
   authTokenPayload,
   clearSessionCookie,
@@ -21,6 +24,30 @@ const signupSchema = Joi.object({
   email: Joi.string().email().max(254).required(),
   password: Joi.string().min(8).max(200).required(),
   name: Joi.string().trim().min(1).max(120).optional(),
+  termsAccepted: Joi.boolean().valid(true).required().messages({
+    "any.only": "Please accept the Terms of Use to create an account.",
+    "any.required": "Please accept the Terms of Use to create an account.",
+  }),
+  // Consent to use the account details as described in the notice — separate from the Terms.
+  consent: Joi.boolean().valid(true).required().messages({
+    "any.only": "Please agree to Ekotsa using your details as described in the notice.",
+    "any.required": "Please agree to Ekotsa using your details as described in the notice.",
+  }),
+  ...privacyFields,
+});
+
+const googleCompleteSignupSchema = Joi.object({
+  signupCode: Joi.string().trim().min(20).max(200).required(),
+  termsAccepted: Joi.boolean().valid(true).required().messages({
+    "any.only": "Please accept the Terms of Use to create an account.",
+    "any.required": "Please accept the Terms of Use to create an account.",
+  }),
+  // Consent to use the account details as described in the notice — separate from the Terms.
+  consent: Joi.boolean().valid(true).required().messages({
+    "any.only": "Please agree to Ekotsa using your details as described in the notice.",
+    "any.required": "Please agree to Ekotsa using your details as described in the notice.",
+  }),
+  ...privacyFields,
 });
 
 const loginSchema = Joi.object({
@@ -137,7 +164,25 @@ export const AuthController = {
   async signup(req: Request, res: Response, next: NextFunction) {
     try {
       const body = validateOrThrow(signupSchema, req.body);
-      const result = await AuthService.signup(body);
+      assertCurrentNotice("signup", body.noticeVersion);
+      const result = await AuthService.signup({ email: body.email, password: body.password, name: body.name });
+      const consent = await PrivacyService.recordConsent({
+        subjectType: "USER",
+        subjectId: result.user.id,
+        noticeKey: "signup",
+        email: result.user.email,
+        childName: body.name ?? null,
+        purposes: ["account"],
+        privacy: body as unknown as PrivacyInput,
+        termsAccepted: body.termsAccepted,
+        ip: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      if (consent.guardianStatus === "PENDING") {
+        // Under-18: no session until a parent/guardian approves by email.
+        res.status(201).json({ ok: true, requiresGuardianConsent: true, user: { email: result.user.email } });
+        return;
+      }
       const auth = authTokenPayload(result.token, result.user);
       // Cookie mirror for Next middleware only; clients must use Bearer accessToken.
       setSessionCookie(res, result.token, result.user.role);
@@ -300,7 +345,8 @@ export const AuthController = {
       });
       const target = new URL(result.redirectUrl);
       // Desktop deep links (hotel-manager://…) go straight back to the app.
-      if (target.protocol !== "http:" && target.protocol !== "https:") {
+      // New Google users finish sign-up (age, guardian, Terms) before any account exists.
+      if (target.protocol !== "http:" && target.protocol !== "https:" || target.pathname === "/auth/complete-signup") {
         res.redirect(target.toString());
         return;
       }
@@ -312,6 +358,38 @@ export const AuthController = {
       callback.searchParams.set("redirect", `${target.pathname}${target.search}`);
       if (exchangeCode) callback.searchParams.set("exchange_code", exchangeCode);
       res.redirect(callback.toString());
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async googleSignupProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const code = typeof req.query.signup_code === "string" ? req.query.signup_code : "";
+      if (code.length < 20) throw new AppError(400, "Missing sign-up code.", "GOOGLE_SIGNUP_INVALID");
+      res.json({ ok: true, profile: await AuthService.getGoogleSignupProfile(code) });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async googleCompleteSignup(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = validateOrThrow(googleCompleteSignupSchema, req.body);
+      const result = await AuthService.completeGoogleSignup({
+        signupCode: body.signupCode,
+        privacy: body as unknown as PrivacyInput,
+        termsAccepted: body.termsAccepted,
+        ip: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      if (result.requiresGuardianConsent) {
+        res.status(201).json({ ok: true, requiresGuardianConsent: true });
+        return;
+      }
+      const auth = authTokenPayload(result.token, result.user);
+      setSessionCookie(res, result.token, result.user.role);
+      res.status(201).json({ ok: true, ...auth, desktopRedirect: result.desktopRedirect, data: auth });
     } catch (error) {
       next(error);
     }

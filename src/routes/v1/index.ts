@@ -25,6 +25,7 @@ import { cmsInternalRouter, cmsRouter } from "../../modules/cms/cms.routes.js";
 import { DeviceResetController } from "../../modules/admin/admin.ops.controller.js";
 import { ActivationCodesController } from "../../modules/licenses/activation-codes.controller.js";
 import { rateLimit } from "../../middleware/rateLimit.js";
+import { marketingRouter, privacyInternalRouter, privacyRouter } from "../../modules/privacy/privacy.routes.js";
 
 /**
  * Canonical public API. Also mounted at /api/v1 for Atithi / website compatibility.
@@ -50,6 +51,8 @@ v1Router.get("/oauth/google/start", rateLimit({ keyPrefix: "auth-google-start-al
 v1Router.post("/oauth/google/start", rateLimit({ keyPrefix: "auth-google-start-alias", windowMs: 60_000, max: 20 }), AuthController.googleStart);
 v1Router.get("/oauth/google/callback", AuthController.googleCallback);
 v1Router.post("/oauth/google/exchange", rateLimit({ keyPrefix: "auth-google-exchange-alias", windowMs: 60_000, max: 20 }), AuthController.googleExchange);
+v1Router.get("/oauth/google/signup", rateLimit({ keyPrefix: "auth-google-signup-profile", windowMs: 60_000, max: 30 }), AuthController.googleSignupProfile);
+v1Router.post("/oauth/google/complete-signup", rateLimit({ keyPrefix: "auth-google-complete-signup", windowMs: 60_000, max: 10 }), AuthController.googleCompleteSignup);
 v1Router.post("/oauth/google/exchange-browser", rateLimit({ keyPrefix: "auth-google-browser-exchange-alias", windowMs: 60_000, max: 20 }), AuthController.googleBrowserExchange);
 
 v1Router.use("/activation", activationRouter);
@@ -74,6 +77,9 @@ v1Router.use("/admin", adminRouter);
 v1Router.use("/notifications", notificationsRouter);
 v1Router.use("/internal/notifications", notificationsInternalRouter);
 v1Router.use("/internal/cms", cmsInternalRouter);
+v1Router.use("/privacy", privacyRouter);
+v1Router.use("/marketing", marketingRouter);
+v1Router.use("/internal/privacy", privacyInternalRouter);
 
 v1Router.post("/contact", rateLimit({ keyPrefix: "contact-alias", windowMs: 60_000, max: 10 }), ContactController.contact);
 v1Router.post("/business-assessment", rateLimit({ keyPrefix: "business-assessment-alias", windowMs: 60_000, max: 10 }), ContactController.businessAssessment);

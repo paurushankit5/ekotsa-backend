@@ -13,6 +13,7 @@ import {
   type PublicReleaseManifest,
 } from "../releases/releases.manifest.js";
 import { ReleasesService } from "../releases/releases.service.js";
+import { PrivacyService } from "../privacy/privacy.service.js";
 
 const DOWNLOAD_AUTH_TTL_MS = 30 * 60 * 1000;
 const DOWNLOAD_AUTH_MAX_USES = 3;
@@ -116,6 +117,9 @@ export const DownloadsService = {
     }
     if (auth.remainingUses <= 0) {
       throw new AppError(401, "Download authorization exhausted", "DOWNLOAD_EXHAUSTED");
+    }
+    if (auth.registrationId) {
+      await PrivacyService.assertNotBlocked("REGISTRATION", auth.registrationId);
     }
 
     const [count] = await DownloadAuthorization.update(

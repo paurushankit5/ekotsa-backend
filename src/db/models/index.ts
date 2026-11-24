@@ -2,6 +2,15 @@ import { sequelize } from "../sequelize.js";
 import { initUserModel, User } from "./User.js";
 import { initPasswordResetOtpModel, PasswordResetOtp } from "./PasswordResetOtp.js";
 import { initAdminHandoffCodeModel, AdminHandoffCode } from "./AdminHandoffCode.js";
+import { initConsentRecordModel, ConsentRecord } from "./ConsentRecord.js";
+import { initPrivacyRequestModel, PrivacyRequest } from "./PrivacyRequest.js";
+import {
+  initPrivacyControlModels,
+  LegalHold,
+  MarketingSuppression,
+  PrivacyChoiceEvent,
+  TermsAcceptance,
+} from "./PrivacyControls.js";
 import { initDeviceModel, Device } from "./Device.js";
 import { initDeviceAuthTokenModel, DeviceAuthToken } from "./DeviceAuthToken.js";
 import { initActivationSessionModel, ActivationSession } from "./ActivationSession.js";
@@ -64,6 +73,9 @@ import { initAppReleaseModel, AppRelease } from "./AppRelease.js";
 initUserModel(sequelize);
 initPasswordResetOtpModel(sequelize);
 initAdminHandoffCodeModel(sequelize);
+initConsentRecordModel(sequelize);
+initPrivacyRequestModel(sequelize);
+initPrivacyControlModels(sequelize);
 initDeviceModel(sequelize);
 initDeviceAuthTokenModel(sequelize);
 initActivationSessionModel(sequelize);
@@ -207,6 +219,12 @@ export {
   User,
   PasswordResetOtp,
   AdminHandoffCode,
+  ConsentRecord,
+  PrivacyRequest,
+  PrivacyChoiceEvent,
+  TermsAcceptance,
+  MarketingSuppression,
+  LegalHold,
   Device,
   DeviceAuthToken,
   ActivationSession,

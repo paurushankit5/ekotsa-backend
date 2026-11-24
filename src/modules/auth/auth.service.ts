@@ -33,7 +33,15 @@ import {
 } from "./auth.google.js";
 
 const OTP_TTL_MS = 10 * 60 * 1000;
+import { touchUserActivity } from "../privacy/activity.js";
+
 const ADMIN_HANDOFF_TTL_MS = 2 * 60 * 1000;
+
+/** Under-18 accounts cannot sign in until a parent/guardian has approved (DPDP Act s.9). */
+async function assertGuardianConsent(userId: string) {
+  const { PrivacyService } = await import("../privacy/privacy.service.js");
+  await PrivacyService.assertNotBlocked("USER", userId);
+}
 const MAX_OTP_ATTEMPTS = 5;
 export const LOCAL_DEMO_ADMIN_EMAIL = "demo-admin@ekotsa.test";
 
@@ -73,6 +81,7 @@ export const AuthService = {
       email: user.email,
       role: user.role,
     });
+    void touchUserActivity(user.id);
 
     // Best-effort link to an existing customer registration
     const { RegistrationsService } = await import("../registrations/registrations.service.js");
@@ -90,12 +99,14 @@ export const AuthService = {
     if (!passwordLoginMayIssueSession(user.role, user.email, loadEnv())) {
       throw new AppError(403, "Administrator login requires a second factor", "ADMIN_MFA_REQUIRED");
     }
+    if (user.role !== "ADMIN") await assertGuardianConsent(user.id);
 
     const token = await signSession({
       sub: user.id,
       email: user.email,
       role: user.role,
     });
+    void touchUserActivity(user.id);
 
     const { RegistrationsService } = await import("../registrations/registrations.service.js");
     await RegistrationsService.linkUser(user.id, user.email).catch(() => undefined);
@@ -106,6 +117,7 @@ export const AuthService = {
   async me(userId: string) {
     const user = await User.findByPk(userId);
     if (!user) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+    void touchUserActivity(user.id);
 
     const now = new Date();
     const env = loadEnv();
@@ -322,6 +334,7 @@ export const AuthService = {
       email: user.email,
       role: user.role,
     });
+    void touchUserActivity(user.id);
 
     const { RegistrationsService } = await import("../registrations/registrations.service.js");
     await RegistrationsService.linkUser(user.id, user.email).catch(() => undefined);
@@ -429,9 +442,9 @@ export const AuthService = {
     state: string;
     origin?: string | null;
   }): Promise<{
-    user: ReturnType<typeof publicUser>;
-    token: string;
-    activationToken: string;
+    user?: ReturnType<typeof publicUser>;
+    token?: string;
+    activationToken?: string;
     redirectUrl: string;
   }> {
     const { profile, transaction } = await completeGoogleOAuthCallback(input);
@@ -439,19 +452,24 @@ export const AuthService = {
       throw new AppError(400, "Google email is not verified", "GOOGLE_EMAIL_UNVERIFIED");
     }
 
+    const env0 = loadEnv();
     let user =
       (await User.findOne({ where: { googleSub: profile.googleSub } })) ||
       (await User.findOne({ where: { email: profile.email } }));
 
     if (!user) {
-      user = await User.create({
-        email: profile.email,
-        name: profile.name,
-        googleSub: profile.googleSub,
-        passwordHash: null,
-        emailVerified: true,
-        role: "USER",
+      // New Google user: do NOT create an account yet. Hold the Google profile on the transaction and
+      // send the browser to the sign-up step (age, guardian if under 18, Terms) — see completeGoogleSignup.
+      const signupCode = randomBytes(32).toString("base64url");
+      await transaction.update({
+        pendingProfileJson: JSON.stringify({ googleSub: profile.googleSub, email: profile.email, name: profile.name }),
+        completedAt: new Date(),
+        browserExchangeCodeHash: hashGoogleOAuthValue(signupCode),
+        browserExchangeExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
       });
+      const url = new URL("/auth/complete-signup", env0.FRONTEND_URL);
+      url.searchParams.set("signup_code", signupCode);
+      return { redirectUrl: url.toString() };
     } else {
       await user.update({
         googleSub: user.googleSub || profile.googleSub,
@@ -484,6 +502,7 @@ export const AuthService = {
       email: user.email,
       role: user.role,
     });
+    void touchUserActivity(user.id);
 
     const browserReturnTo = normalizeBrowserReturnTo(
       transaction.browserReturnTo,
@@ -539,12 +558,14 @@ export const AuthService = {
     }
     const user = await User.findByPk(transaction.userId);
     if (!user) throw new AppError(400, "OAuth user no longer exists.", "GOOGLE_EXCHANGE_INVALID");
+    if (user.role !== "ADMIN") await assertGuardianConsent(user.id);
     if (flow === "BROWSER" && user.role === "ADMIN") {
       const adminCode = randomBytes(32).toString("base64url");
       await transaction.update({ adminExchangeCodeHash: hashGoogleOAuthValue(adminCode), adminExchangeExpiresAt: new Date(Date.now() + 2 * 60 * 1000), adminExchangeConsumedAt: null });
       return { role: user.role, adminExchangeCode: adminCode };
     }
     const token = await signSession({ sub: user.id, email: user.email, role: user.role });
+    void touchUserActivity(user.id);
     return { role: user.role, token, user: publicUser(user) };
   },
 
@@ -583,6 +604,7 @@ export const AuthService = {
     const user = await User.findByPk(record.userId);
     if (!user || user.role !== "ADMIN") throw new AppError(403, "Admin access required", "FORBIDDEN");
     const token = await signSession({ sub: user.id, email: user.email, role: user.role });
+    void touchUserActivity(user.id);
     return { token, user: publicUser(user) };
   },
 
@@ -593,7 +615,96 @@ export const AuthService = {
     origin?: string | null;
   }): Promise<{ user: ReturnType<typeof publicUser>; token: string }> {
     const result = await this.completeGoogleOAuth(input);
+    if (!result.user || !result.token) {
+      throw new AppError(409, "Finish creating your account on the website first.", "SIGNUP_REQUIRED");
+    }
     return { user: result.user, token: result.token };
+  },
+
+  /** Sign-up step for a new Google user (after age, guardian details and Terms). */
+  async getGoogleSignupProfile(signupCode: string) {
+    const transaction = await GoogleOAuthTransaction.findOne({
+      where: { provider: "GOOGLE", browserExchangeCodeHash: hashGoogleOAuthValue(signupCode) },
+    });
+    if (!transaction?.pendingProfileJson || transaction.browserExchangeConsumedAt || !transaction.browserExchangeExpiresAt || transaction.browserExchangeExpiresAt < new Date()) {
+      throw new AppError(400, "This sign-up link has expired. Please choose Continue with Google again.", "GOOGLE_SIGNUP_INVALID");
+    }
+    const profile = JSON.parse(transaction.pendingProfileJson) as { email: string; name: string | null };
+    return { email: profile.email, name: profile.name, desktop: Boolean(transaction.desktopCallbackUri) };
+  },
+
+  async completeGoogleSignup(input: {
+    signupCode: string;
+    privacy: import("../privacy/privacy.schema.js").PrivacyInput;
+    termsAccepted: boolean;
+    ip?: string | null;
+    userAgent?: string | null;
+  }): Promise<
+    | { requiresGuardianConsent: true; email: string }
+    | { requiresGuardianConsent: false; token: string; user: ReturnType<typeof publicUser>; desktopRedirect: string | null }
+  > {
+    const transaction = await GoogleOAuthTransaction.findOne({
+      where: { provider: "GOOGLE", browserExchangeCodeHash: hashGoogleOAuthValue(input.signupCode) },
+    });
+    const now = new Date();
+    if (!transaction?.pendingProfileJson || transaction.browserExchangeConsumedAt || !transaction.browserExchangeExpiresAt || transaction.browserExchangeExpiresAt < now) {
+      throw new AppError(400, "This sign-up link has expired. Please choose Continue with Google again.", "GOOGLE_SIGNUP_INVALID");
+    }
+    const profile = JSON.parse(transaction.pendingProfileJson) as { googleSub: string; email: string; name: string | null };
+    // Validate the notice before consuming the code so a stale page can retry.
+    const { assertCurrentNotice } = await import("../privacy/notices.js");
+    assertCurrentNotice("google_signup", input.privacy.noticeVersion);
+    const consumed = await GoogleOAuthTransaction.update(
+      { browserExchangeConsumedAt: now },
+      { where: { id: transaction.id, browserExchangeConsumedAt: null } },
+    );
+    if (consumed[0] !== 1) throw new AppError(409, "This sign-up link was already used.", "GOOGLE_SIGNUP_CONSUMED");
+
+    let user = (await User.findOne({ where: { googleSub: profile.googleSub } })) || (await User.findOne({ where: { email: profile.email } }));
+    if (!user) {
+      user = await User.create({
+        email: profile.email,
+        name: profile.name,
+        googleSub: profile.googleSub,
+        passwordHash: null,
+        emailVerified: true,
+        role: "USER",
+      });
+    }
+    const { PrivacyService } = await import("../privacy/privacy.service.js");
+    const consent = await PrivacyService.recordConsent({
+      subjectType: "USER",
+      subjectId: user.id,
+      noticeKey: "google_signup",
+      email: user.email,
+      childName: user.name,
+      purposes: ["account"],
+      privacy: input.privacy,
+      termsAccepted: input.termsAccepted,
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+    await transaction.update({ userId: user.id, pendingProfileJson: null });
+    if (consent.guardianStatus === "PENDING") return { requiresGuardianConsent: true, email: user.email };
+
+    const { RegistrationsService } = await import("../registrations/registrations.service.js");
+    await RegistrationsService.linkUser(user.id, user.email).catch(() => undefined);
+
+    let desktopRedirect: string | null = null;
+    const desktopCallbackUri = normalizeDesktopCallbackUri(transaction.desktopCallbackUri);
+    if (desktopCallbackUri) {
+      const { DeviceService } = await import("../devices/devices.service.js");
+      const activationSession = await DeviceService.createActivationSession({ userId: user.id });
+      await transaction.update({ exchangeCodeHash: hashGoogleOAuthValue(activationSession.token) });
+      const url = new URL(desktopCallbackUri);
+      url.searchParams.set("handoff_code", activationSession.token);
+      url.searchParams.set("handoffCode", activationSession.token);
+      url.searchParams.set("provider", "google");
+      desktopRedirect = url.toString();
+    }
+    const token = await signSession({ sub: user.id, email: user.email, role: user.role });
+    void touchUserActivity(user.id);
+    return { requiresGuardianConsent: false, token, user: publicUser(user), desktopRedirect };
   },
 
   async exchangeGoogleHandoff(input: { handoffCode: string }): Promise<{
@@ -633,6 +744,7 @@ export const AuthService = {
     if (!user) {
       throw new AppError(404, "User not found.", "USER_NOT_FOUND");
     }
+    if (user.role !== "ADMIN") await assertGuardianConsent(user.id);
 
     const { hashActivationSessionToken } = await import("../devices/devices.crypto.js");
     const { ActivationSession } = await import("../../db/models/index.js");

@@ -22,6 +22,8 @@ export class User extends Model<
   declare emailVerified: CreationOptional<boolean>;
   declare googleSub: CreationOptional<string | null>;
   declare trialStartedAt: CreationOptional<Date | null>;
+  declare lastActiveAt: CreationOptional<Date | null>;
+  declare inactivityNoticeSentAt: CreationOptional<Date | null>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
 }
@@ -66,6 +68,8 @@ export function initUserModel(sequelize: Sequelize): typeof User {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      lastActiveAt: { type: DataTypes.DATE, allowNull: true },
+      inactivityNoticeSentAt: { type: DataTypes.DATE, allowNull: true },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,

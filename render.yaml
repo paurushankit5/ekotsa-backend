@@ -1,0 +1,89 @@
+# Render Blueprint for the Ekotsa API (api.ekotsa.com).
+# Region: Singapore — same region as the Neon database (AWS ap-southeast-1).
+# Secrets are NOT stored here: every `sync: false` variable is entered in the Render dashboard.
+# See docs/PRODUCTION_DEPLOYMENT.md for the values and the go-live checklist.
+services:
+  - type: web
+    name: ekotsa-api
+    runtime: node
+    region: singapore
+    plan: starter
+    branch: main
+    # Dev dependencies (TypeScript, tsx) are needed to build and to run migrations.
+    buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: FRONTEND_URL
+        value: https://www.ekotsa.com
+      - key: APP_PUBLIC_URL
+        value: https://api.ekotsa.com
+      - key: CORS_ORIGINS
+        value: https://www.ekotsa.com,https://admin.ekotsa.com
+      - key: GOOGLE_OAUTH_REDIRECT_URI
+        value: https://www.ekotsa.com/api/v1/oauth/google/callback
+      - key: AUTH_COOKIE_NAME
+        value: ekotsa_session
+      - key: ADMIN_AUTH_COOKIE_NAME
+        value: ekotsa_admin_session
+      - key: LOCAL_DEMO_ADMIN_ENABLED
+        value: "false"
+      - key: DEMO_ADMIN_CONFIRM_DISPOSABLE
+        value: "false"
+      - key: AUTH_JWT_ACCEPT_LEGACY_HS256
+        value: "false"
+      # --- secrets: set in the dashboard ---
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: OTP_PEPPER
+        sync: false
+      - key: DEVICE_TOKEN_PEPPER
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: AUTH_JWT_KEY_ID
+        sync: false
+      - key: AUTH_JWT_PRIVATE_KEY
+        sync: false
+      - key: LICENSE_SIGNING_KEY_ID
+        sync: false
+      - key: LICENSE_SIGNING_PRIVATE_KEY
+        sync: false
+      - key: LICENSE_SIGNING_PUBLIC_KEY
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_TO
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false

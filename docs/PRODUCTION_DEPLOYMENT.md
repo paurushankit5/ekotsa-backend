@@ -1,12 +1,30 @@
 # Production deployment checklist
 
-Host-agnostic checklist for taking Ekotsa live. Domains:
+Checklist for taking Ekotsa live. Hosting (decided 2026-11-25; named in the Privacy Policy):
 
-| Role | URL | Runs |
-|---|---|---|
-| Public website | `https://www.ekotsa.com` | ekotsa-website (Next.js) |
-| Admin panel | `https://admin.ekotsa.com` | same ekotsa-website deployment |
-| API | `https://api.ekotsa.com` | ekotsa-backend (Express) |
+| Role | URL | Runs | Host |
+|---|---|---|---|
+| Public website | `https://www.ekotsa.com` | ekotsa-website (Next.js) | Vercel, region `bom1` (Mumbai) — `vercel.json` |
+| Admin panel | `https://admin.ekotsa.com` | same ekotsa-website deployment | Vercel (same project, second domain) |
+| API | `https://api.ekotsa.com` | ekotsa-backend (Express) | Render, region Singapore — `render.yaml` |
+| Database | — | Neon Postgres | AWS ap-southeast-1 (Singapore) |
+
+If you ever change host, update the provider table in the website's Privacy Policy first.
+
+### Vercel (website)
+1. Import the `ekotsa-website` repo; framework Next.js (auto). `vercel.json` pins functions to Mumbai.
+2. Add domains `www.ekotsa.com`, `admin.ekotsa.com`, and `ekotsa.com` (redirect → www).
+3. Environment variables: from `.env.production.example` (no backend secrets).
+4. Accept Vercel's DPA (Vercel dashboard → Settings → Legal) — the Privacy Policy lists Vercel as a processor.
+
+### Render (API)
+1. New → Blueprint → select the `ekotsa-backend` repo; Render reads `render.yaml` (Singapore, health check,
+   migrations run before each deploy via `preDeployCommand`).
+2. Fill every `sync: false` secret in the dashboard (values from section 1 and `.env.production.example`).
+3. Custom domain `api.ekotsa.com` (CNAME as Render shows). Accept Render's DPA.
+4. Log retention: the Privacy Policy keeps security logs for 2 years. Render/Vercel keep request logs only for a
+   short period, so add a log stream (Render → Log Streams; Vercel → Log Drains) to a store with ≥1-year
+   retention, or rely on the database `audit_logs` table and record this decision (see lawyer item B7).
 
 `https://ekotsa.com` (apex) should redirect permanently to `https://www.ekotsa.com`.
 
@@ -61,6 +79,11 @@ if it is lost, every installed desktop app must be rebuilt with a new public key
 2. Validate: `npm run check:env:production -- --check-backend` → `PASS`.
 3. Point both `www.ekotsa.com` and `admin.ekotsa.com` at the same deployment.
 4. Leave `DOWNLOAD_ALLOW_UNSIGNED` unset unless shipping unsigned installers is a deliberate decision.
+5. Analytics (PostHog EU, consent-only): create a project at https://eu.posthog.com, put its project key in
+   `NEXT_PUBLIC_POSTHOG_KEY` (`NEXT_PUBLIC_ANALYTICS_PROVIDER=posthog`, host `https://eu.i.posthog.com`).
+   In PostHog project settings: enable **Discard client IP data**, set data retention to **12 months**,
+   keep session replay off. Accept PostHog's DPA. (The Privacy and Cookie policies promise these settings.)
+   Leaving the key empty keeps analytics off.
 
 ## 5. Google Cloud Console (OAuth client used by the backend)
 
@@ -89,7 +112,12 @@ secrets:
 - `CRON_SECRET` = the backend's `CRON_SECRET`
 
 Jobs: every 10 min — notifications outbox + scheduled CMS publishing; daily 03:30 UTC — licence
-expiry reminders. If the host has its own scheduler, call the same endpoints with header
+expiry reminders and the privacy retention job (`/api/v1/internal/privacy/purge`). That job applies the
+Privacy Policy retention schedule — under-18 submissions without guardian approval (7 days), enquiries (24
+months), download registrations/history (36 months), expired codes, old email logs (24 months), security
+logs (2 years), inactive customer accounts (3 years → email notice → erased 7 days later; accounts with
+licence or payment records in the last 8 years are kept) — and emails the Grievance Officer a digest of
+privacy requests due within 7 days or overdue. Send `{"dryRun":true}` to see counts without deleting. If the host has its own scheduler, call the same endpoints with header
 `x-cron-token: <CRON_SECRET>` instead.
 
 ## 9. Desktop app (Ekotsa Atithi) release build
@@ -118,6 +146,12 @@ The public key must be the pair of the backend's `LICENSE_SIGNING_PRIVATE_KEY`. 
 - [ ] Desktop app: sign in, activate device, licence issued and verified
 - [ ] GitHub Actions "Scheduled jobs" run green
 - [ ] Repeated login attempts hit `429` (rate limiting works)
+- [ ] **Real client IPs reach the API through the Vercel proxy.** Requests from the website pass Vercel → Render.
+      Check `SELECT key FROM rate_limit_counters ORDER BY "resetAt" DESC LIMIT 5;` after a few logins from two
+      different networks: keys must show the visitors' IPs, not one shared Vercel IP. If they show Vercel's IP,
+      every visitor shares one rate limit — fix before launch (adjust `TRUST_PROXY_HOPS` or forward the client IP).
+- [ ] Privacy request form → confirmation email arrives → request appears in Admin → Privacy requests
+- [ ] `POST /api/v1/internal/privacy/purge` with `{"dryRun":true}` and the cron token returns counts
 
 ## 11. Clean-up after go-live
 

@@ -3,6 +3,10 @@ import { Joi, validateOrThrow } from "../../utils/validate.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import { OrganizationsService, RegistrationsService } from "./registrations.service.js";
 import { setDownloadSessionCookie } from "../downloads/downloads.cookies.js";
+import { privacyFields, type PrivacyInput } from "../privacy/privacy.schema.js";
+import { PrivacyService } from "../privacy/privacy.service.js";
+import { assertCurrentNotice } from "../privacy/notices.js";
+import { ChoicesService } from "../privacy/choices.service.js";
 
 const createSchema = Joi.object({
   fullName: Joi.string().trim().min(1).max(120).required(),
@@ -14,13 +18,17 @@ const createSchema = Joi.object({
   businessAddress: Joi.string().trim().min(3).max(1000).required(),
   whatsappNumber: Joi.string().max(40).optional(),
   source: Joi.string().max(80).optional(),
-  // Accepted from the website form but not persisted separately (lead gate only).
-  termsAccepted: Joi.boolean().optional(),
-  privacyAcknowledged: Joi.boolean().optional(),
-  marketingConsent: Joi.boolean().optional(),
-  termsVersion: Joi.string().max(40).optional(),
-  privacyVersion: Joi.string().max(40).optional(),
+  termsAccepted: Joi.boolean().valid(true).required().messages({
+    "any.only": "Please accept the Terms of Use to continue.",
+  }),
+  // Consent to use these details for the download/trial purpose described in the notice.
+  privacyAcknowledged: Joi.boolean().valid(true).required().messages({
+    "any.only": "Please agree to Ekotsa using these details as described in the notice.",
+  }),
+  /** Version of the marketing notice shown next to the optional product-updates box. */
+  marketingNoticeVersion: Joi.string().max(40).optional(),
   whatsappCountryCode: Joi.string().max(8).optional(),
+  ...privacyFields,
 });
 
 const statusSchema = Joi.object({
@@ -32,6 +40,8 @@ export const RegistrationsController = {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const body = validateOrThrow(createSchema, req.body);
+      assertCurrentNotice("download", body.noticeVersion);
+      if (body.marketingConsent && body.ageCategory === "ADULT") assertCurrentNotice("marketing_email", body.marketingNoticeVersion);
       const result = await RegistrationsService.create({
         fullName: body.fullName,
         organizationName: body.organizationName,
@@ -44,12 +54,40 @@ export const RegistrationsController = {
         source: body.source,
         linkedUserId: req.userSession?.userId ?? null,
       });
+      const consent = await PrivacyService.recordConsent({
+        subjectType: "REGISTRATION",
+        subjectId: result.registration.id,
+        noticeKey: "download",
+        email: body.email,
+        childName: body.fullName,
+        purposes: ["download_registration"],
+        privacy: body as unknown as PrivacyInput,
+        termsAccepted: body.termsAccepted,
+        ip: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      // Optional product updates: a separate, unticked choice — never for under-18s.
+      if (body.marketingConsent && body.ageCategory === "ADULT") {
+        await ChoicesService.record({
+          subject: { type: "EMAIL", id: body.email.trim().toLowerCase() },
+          purpose: "marketing_email",
+          action: "GRANT",
+          noticeVersion: body.marketingNoticeVersion,
+          source: "download_form",
+          email: body.email,
+          ip: req.ip,
+          userAgent: req.get("user-agent"),
+        });
+      }
+      // Under-18: downloads stay blocked until a parent/guardian approves (checked at authorize).
       setDownloadSessionCookie(
         res,
         result.downloadAuth.token,
         new Date(result.downloadAuth.expiresAt),
       );
-      res.status(result.created ? 201 : 200).json({ ok: true, ...result });
+      res
+        .status(result.created ? 201 : 200)
+        .json({ ok: true, ...result, guardianStatus: consent.guardianStatus });
     } catch (error) {
       next(error);
     }

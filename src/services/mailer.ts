@@ -6,6 +6,7 @@ export async function sendEmail(input: {
   subject: string;
   text: string;
   html?: string;
+  headers?: Record<string, string>;
 }): Promise<{ delivered: boolean; mode: "smtp" | "console" }> {
   const env = loadEnv();
 
@@ -33,6 +34,7 @@ export async function sendEmail(input: {
     subject: input.subject,
     text: input.text,
     html: input.html,
+    headers: input.headers,
   });
 
   return { delivered: true, mode: "smtp" };

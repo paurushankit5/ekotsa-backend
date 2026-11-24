@@ -98,17 +98,23 @@ export const DeviceService = {
       throw new AppError(401, "Activation session expired", "ACTIVATION_SESSION_EXPIRED");
     }
 
+    // Data minimisation: the desktop app sends raw hardware/installation identifiers inside `metadata`.
+    // Keep only peppered hashes of them; never store the raw values.
+    const rawMeta: Record<string, unknown> =
+      input.metadata && typeof input.metadata === "object" ? { ...(input.metadata as Record<string, unknown>) } : {};
+    const metaInstallationId = typeof rawMeta.installationId === "string" ? rawMeta.installationId : undefined;
+    const metaHardwareId = typeof rawMeta.hardwareId === "string" ? rawMeta.hardwareId : undefined;
+    for (const key of ["installationId", "hardwareId", "deviceFingerprint", "fingerprint", "macAddress", "serialNumber"]) {
+      delete rawMeta[key];
+    }
+
     const deviceIdHash = hashDeviceId(input.deviceId);
-    const installationIdHash = input.installationId
-      ? hashInstallationId(input.installationId)
-      : null;
-    const deviceFingerprintHash = input.deviceFingerprint
-      ? hashDeviceFingerprint(input.deviceFingerprint)
-      : null;
-    const metaJson = JSON.stringify({
-      ...(input.metadata && typeof input.metadata === "object" ? input.metadata : {}),
-      clientDeviceId: input.deviceId,
-    }).slice(0, 5000);
+    const installationSource = input.installationId ?? metaInstallationId;
+    const installationIdHash = installationSource ? hashInstallationId(installationSource) : null;
+    const fingerprintSource = input.deviceFingerprint ?? metaHardwareId;
+    const deviceFingerprintHash = fingerprintSource ? hashDeviceFingerprint(fingerprintSource) : null;
+    // clientDeviceId is the app-generated licence binding ID; the signed licence must contain it.
+    const metaJson = JSON.stringify({ ...rawMeta, clientDeviceId: input.deviceId }).slice(0, 5000);
 
     const plainToken = newDeviceAuthToken();
     const tokenHash = hashDeviceAuthToken(plainToken);

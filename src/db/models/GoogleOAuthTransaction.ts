@@ -29,6 +29,7 @@ export class GoogleOAuthTransaction extends Model<
   declare adminExchangeExpiresAt: CreationOptional<Date | null>;
   declare adminExchangeConsumedAt: CreationOptional<Date | null>;
   declare userId: CreationOptional<string | null>;
+  declare pendingProfileJson: CreationOptional<string | null>;
   declare completedAt: CreationOptional<Date | null>;
   declare consumedAt: CreationOptional<Date | null>;
   declare expiresAt: Date;
@@ -95,6 +96,7 @@ export function initGoogleOAuthTransactionModel(
         type: DataTypes.STRING,
         allowNull: true,
       },
+      pendingProfileJson: { type: DataTypes.TEXT, allowNull: true },
       completedAt: {
         type: DataTypes.DATE,
         allowNull: true,
